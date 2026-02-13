@@ -54,6 +54,7 @@
 #include <vector>
 
 #include "rclcpp/node.hpp"
+#include "sensor_msgs/msg/joint_state.hpp"
 
 namespace cartesian_controller_base
 {
@@ -106,28 +107,37 @@ public:
 
   bool init(std::shared_ptr<rclcpp_lifecycle::LifecycleNode> nh, const KDL::Chain & chain,
             const KDL::JntArray & upper_pos_limits,
-            const KDL::JntArray & lower_pos_limits) override;
+            const KDL::JntArray & lower_pos_limits,
+            const KDL::JntArray & accel_limits) override;
 
 private:
   //! Build a generic robot model for control
   bool buildGenericModel();
+  // get desired null space joint states
+  void nsStateCallback(const sensor_msgs::msg::JointState::SharedPtr msg);
 
   // Forward dynamics
   std::shared_ptr<KDL::ChainJntToJacSolver> m_jnt_jacobian_solver;
   std::shared_ptr<KDL::ChainDynParam> m_jnt_space_inertia_solver;
+  std::shared_ptr<KDL::ChainDynParam> m_gravity_solver;
   KDL::Jacobian m_jnt_jacobian;
   KDL::JntSpaceInertiaMatrix m_jnt_space_inertia;
+  rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr m_ns_jnt_sub;
+  KDL::JntArray gravity_comp;
 
   // Dynamic parameters
   const std::string m_params = "solver.forward_dynamics";  ///< namespace for parameter access
+  rclcpp_lifecycle::LifecycleNode::SharedPtr nh_;
+  rclcpp::Logger get_logger() const {return nh_->get_logger();}
 
+  double m_gravity_factor;
   /**
      * Virtual link mass
      * Virtual mass of the manipulator's links. The smaller this value, the
      * more does the end-effector (which has a unit mass of 1.0) dominate dynamic
      * behavior. Near singularities, a bigger value leads to smoother motion.
      */
-  std::atomic<double> m_min = 0.1;
+  std::atomic<double> m_min = 0.1; // 0.002; // 0.05; // 0.1;
 };
 
 }  // namespace cartesian_controller_base

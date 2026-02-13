@@ -149,7 +149,8 @@ public:
      */
 
   virtual bool init(std::shared_ptr<rclcpp_lifecycle::LifecycleNode> nh, const KDL::Chain & chain,
-                    const KDL::JntArray & upper_pos_limits, const KDL::JntArray & lower_pos_limits);
+                    const KDL::JntArray & upper_pos_limits, const KDL::JntArray & lower_pos_limits,
+                    const KDL::JntArray & accel_limits = KDL::JntArray());
 
   /**
      * @brief Update the robot kinematics of the solver
@@ -169,6 +170,7 @@ protected:
      * that this is the default urdf initializer if limits are omitted.
      */
   void applyJointLimits();
+  void applyAccelLimits();
 
   template <typename ParameterT>
   auto auto_declare(const std::string & name, const ParameterT & default_value)
@@ -197,11 +199,16 @@ protected:
   KDL::JntArray m_current_accelerations;
   KDL::JntArray m_last_positions;
   KDL::JntArray m_last_velocities;
+  KDL::JntArray m_ns_positions;
 
   // Joint limits
   KDL::JntArray m_upper_pos_limits;
   KDL::JntArray m_lower_pos_limits;
-
+  // KDL::JntArray m_upper_vel_limits;
+  // KDL::JntArray m_lower_vel_limits;
+  KDL::JntArray m_accel_limits;
+  double m_accel_deadband = 0.005;
+  
   // Forward kinematics
   std::shared_ptr<KDL::ChainFkSolverPos_recursive> m_fk_pos_solver;
   std::shared_ptr<KDL::ChainFkSolverVel_recursive> m_fk_vel_solver;

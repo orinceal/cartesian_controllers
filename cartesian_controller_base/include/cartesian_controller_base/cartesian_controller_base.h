@@ -43,7 +43,7 @@
 #include <cartesian_controller_base/IKSolver.h>
 #include <cartesian_controller_base/SpatialPDController.h>
 #include <cartesian_controller_base/Utility.h>
-#include <realtime_tools/realtime_publisher.h>
+#include <realtime_tools/realtime_publisher.hpp>
 
 #include <controller_interface/controller_interface.hpp>
 #include <functional>
@@ -242,6 +242,8 @@ private:
 
   // Dynamic parameters
   double m_error_scale;
+  double m_accel_scale;
+  bool m_has_accel_limits;
   std::string m_robot_description;
 };
 

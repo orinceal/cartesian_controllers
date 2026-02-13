@@ -77,6 +77,8 @@ bool IKSolver::setStartState(
       m_current_accelerations(i) = 0.0;
       m_last_positions(i) = m_current_positions(i);
       m_last_velocities(i) = m_current_velocities(i);
+      // initialize beginning safe positions
+      m_ns_positions(i) = m_current_positions(i);
     }
     else
     {
@@ -103,7 +105,9 @@ void IKSolver::synchronizeJointPositions(
 }
 
 bool IKSolver::init(std::shared_ptr<rclcpp_lifecycle::LifecycleNode> nh, const KDL::Chain & chain,
-                    const KDL::JntArray & upper_pos_limits, const KDL::JntArray & lower_pos_limits)
+                    const KDL::JntArray & upper_pos_limits, const KDL::JntArray & lower_pos_limits,
+                    const KDL::JntArray & accel_limits)
+                    // const KDL::JntArray & lower_vel_limits, const KDL::JntArray & lower_vel_limits,
 {
   // Initialize
   m_handle = nh;
@@ -114,8 +118,12 @@ bool IKSolver::init(std::shared_ptr<rclcpp_lifecycle::LifecycleNode> nh, const K
   m_current_accelerations.data = ctrl::VectorND::Zero(m_number_joints);
   m_last_positions.data = ctrl::VectorND::Zero(m_number_joints);
   m_last_velocities.data = ctrl::VectorND::Zero(m_number_joints);
+  m_ns_positions.data = ctrl::VectorND::Zero(m_number_joints);
   m_upper_pos_limits = upper_pos_limits;
   m_lower_pos_limits = lower_pos_limits;
+  // m_upper_vel_limits = upper_vel_limits;
+  // m_lower_vel_limits = lower_vel_limits;
+  m_accel_limits = accel_limits;
 
   // Forward kinematics
   m_fk_pos_solver.reset(new KDL::ChainFkSolverPos_recursive(m_chain));
@@ -154,4 +162,15 @@ void IKSolver::applyJointLimits()
   }
 }
 
+void IKSolver::applyAccelLimits()
+{
+  for (int i = 0; i < m_number_joints; ++i)
+  {
+    m_current_accelerations(i) = 
+      std::clamp(m_current_accelerations(i), -m_accel_limits(i), m_accel_limits(i));
+    if (std::abs(m_current_accelerations(i)) < m_accel_deadband) {
+      m_current_accelerations(i) = 0.0;
+    }
+  }
+}
 }  // namespace cartesian_controller_base

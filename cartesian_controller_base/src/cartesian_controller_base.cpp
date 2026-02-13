@@ -100,6 +100,9 @@ CartesianControllerBase::on_init()
     auto_declare<double>("solver.error_scale", 1.0);
     auto_declare<int>("solver.iterations", 1);
     auto_declare<bool>("solver.publish_state_feedback", false);
+    auto_declare<bool>("solver.acceleration_limits_on", false);
+    auto_declare<bool>("solver.acceleration_limits_on", false);
+    auto_declare<double>("robot_description_planning.default_acceleration_scaling_factor", 1.0);
     m_initialized = true;
   }
   return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::SUCCESS;
@@ -187,6 +190,10 @@ CartesianControllerBase::on_configure(const rclcpp_lifecycle::State & previous_s
   // Parse joint limits
   KDL::JntArray upper_pos_limits(m_joint_names.size());
   KDL::JntArray lower_pos_limits(m_joint_names.size());
+  KDL::JntArray accel_limits(m_joint_names.size());
+  m_has_accel_limits = get_node()->get_parameter("solver.acceleration_limits_on").as_bool();
+  m_accel_scale = get_node()->get_parameter("robot_description_planning.default_acceleration_scaling_factor").as_double();
+  
   for (size_t i = 0; i < m_joint_names.size(); ++i)
   {
     if (!robot_model.getJoint(m_joint_names[i]))
@@ -205,11 +212,17 @@ CartesianControllerBase::on_configure(const rclcpp_lifecycle::State & previous_s
       // Non-existent urdf limits are zero initialized
       upper_pos_limits(i) = robot_model.getJoint(m_joint_names[i])->limits->upper;
       lower_pos_limits(i) = robot_model.getJoint(m_joint_names[i])->limits->lower;
+      std::string param_base = "robot_description_planning.joint_limits." + m_joint_names[i];
+      if (m_has_accel_limits) {
+        get_node()->declare_parameter<double>(param_base + ".max_acceleration", 0.1);
+        double limit = get_node()->get_parameter(param_base + ".max_acceleration").as_double();
+        accel_limits(i) = m_accel_scale * limit;
+      }
     }
   }
 
   // Initialize solvers
-  m_ik_solver->init(get_node(), m_robot_chain, upper_pos_limits, lower_pos_limits);
+  m_ik_solver->init(get_node(), m_robot_chain, upper_pos_limits, lower_pos_limits, accel_limits);
   KDL::Tree tmp("not_relevant");
   tmp.addChain(m_robot_chain, "not_relevant");
   m_forward_kinematics_solver.reset(new KDL::TreeFkSolverPos_recursive(tmp));
