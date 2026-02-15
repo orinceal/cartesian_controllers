@@ -137,20 +137,24 @@ trajectory_msgs::msg::JointTrajectoryPoint ForwardDynamicsSolver::getJointContro
   Eigen::VectorXd tau_tip_accel = m_jnt_jacobian.data.transpose() * net_force;
 
   // calculate damping data
-  Eigen::VectorXd damping_coeffs = Eigen::VectorXd::Constant(m_number_joints, 0.002);
+  Eigen::VectorXd damping_coeffs = Eigen::VectorXd::Constant(m_number_joints, 0.005);
   damping_coeffs(0) = 0.3;
   Eigen::VectorXd tau_damping = damping_coeffs.cwiseProduct(m_last_velocities.data);
 
   // joint accelerations according to: \f$ \ddot{q} = H^{-1} ( J^T f + B \dot{q}) \f$
   m_current_accelerations.data = m_jnt_space_inertia.data.inverse() * (tau_tip_accel + tau_damping); //+ tau_ns);
-  applyAccelLimits();
-  RCLCPP_INFO(nh_->get_logger(), "accelerations: %f %f %f %f %f %f %f", m_current_accelerations(0), m_current_accelerations(1), m_current_accelerations(2),
-              m_current_accelerations(3), m_current_accelerations(4), m_current_accelerations(5), m_current_accelerations(6));
+  //applyAccelLimits();
   // Numerical time integration with the Euler forward method
   m_current_velocities.data = m_last_velocities.data + m_current_accelerations.data * period.seconds();
   m_current_velocities.data *= 0.9;  // 10 % global damping against unwanted null space motion.
                                      // Will cause exponential slow-down without input.
+  applyVelLimits();
+  RCLCPP_INFO(nh_->get_logger(), "velocities: %f %f %f %f %f %f %f", m_current_velocities(0), m_current_velocities(1), m_current_velocities(2),
+              m_current_velocities(3), m_current_velocities(4), m_current_velocities(5), m_current_velocities(6));
+
   m_current_positions.data = m_last_positions.data + m_current_velocities.data * period.seconds();
+  RCLCPP_INFO(nh_->get_logger(), "positions: %f %f %f %f %f %f %f", m_current_positions(0), m_current_positions(1), m_current_positions(2),
+              m_current_positions(3), m_current_positions(4), m_current_positions(5), m_current_positions(6));
 
   // Make sure positions stay in allowed margins
   applyJointLimits();
@@ -179,9 +183,10 @@ trajectory_msgs::msg::JointTrajectoryPoint ForwardDynamicsSolver::getJointContro
 bool ForwardDynamicsSolver::init(std::shared_ptr<rclcpp_lifecycle::LifecycleNode> nh,
                                  const KDL::Chain & chain, const KDL::JntArray & upper_pos_limits,
                                  const KDL::JntArray & lower_pos_limits,
+                                 const KDL::JntArray & vel_limits,
                                  const KDL::JntArray & accel_limits)
 {
-  IKSolver::init(nh, chain, upper_pos_limits, lower_pos_limits, accel_limits);
+  IKSolver::init(nh, chain, upper_pos_limits, lower_pos_limits, vel_limits, accel_limits);
   nh_ = nh;
 
   // double total_real_mass = 0.0;
@@ -246,7 +251,7 @@ bool ForwardDynamicsSolver::init(std::shared_ptr<rclcpp_lifecycle::LifecycleNode
 bool ForwardDynamicsSolver::buildGenericModel()
 {
   // Set all masses and inertias to minimal (yet stable) values.
-  double ip_min = 0.002; //0.002; //0.01;
+  double ip_min = 0.01; //0.002; //0.01;
   for (size_t i = 0; i < m_chain.segments.size(); ++i)
   {
     // Fixed joint segment
@@ -257,7 +262,7 @@ bool ForwardDynamicsSolver::buildGenericModel()
     else if (m_chain.segments[i].getJoint().getType() == KDL::Joint::TransAxis) {
       // set higher mass for slider joint
       m_chain.segments[i].setInertia(
-      KDL::RigidBodyInertia(10.0, KDL::Vector::Zero(), KDL::RotationalInertia(5.0, 5.0, 5.0)));
+      KDL::RigidBodyInertia(10.0, KDL::Vector::Zero(), KDL::RotationalInertia(2.0, 2.0, 2.0)));
     } 
     else  // relatively moving segment
     {

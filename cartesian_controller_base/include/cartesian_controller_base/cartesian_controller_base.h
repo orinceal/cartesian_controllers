@@ -204,7 +204,10 @@ private:
   {
     for (size_t i = 0; i < m_joint_cmd_vel_handles.size(); ++i)
     {
-      m_joint_cmd_vel_handles[i].get().set_value(0.0);
+      if (!m_joint_cmd_vel_handles[i].get().set_value(0.0))
+      {
+        RCLCPP_ERROR_ONCE(get_node()->get_logger(), "Failed to set velocity command for joint %zu", i);
+      }
     }
   }
 
@@ -242,7 +245,9 @@ private:
 
   // Dynamic parameters
   double m_error_scale;
+  double m_vel_scale;
   double m_accel_scale;
+  bool m_has_vel_limits;
   bool m_has_accel_limits;
   std::string m_robot_description;
 };

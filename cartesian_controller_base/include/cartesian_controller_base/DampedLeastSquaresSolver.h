@@ -97,7 +97,7 @@ public:
   bool init(std::shared_ptr<rclcpp_lifecycle::LifecycleNode> nh, const KDL::Chain & chain,
             const KDL::JntArray & upper_pos_limits,
             const KDL::JntArray & lower_pos_limits,
-            const KDL::JntArray & accel_limits) override;
+            const KDL::JntArray & vel_limits, const KDL::JntArray & accel_limits) override;
 
 private:
   std::shared_ptr<KDL::ChainJntToJacSolver> m_jnt_jacobian_solver;

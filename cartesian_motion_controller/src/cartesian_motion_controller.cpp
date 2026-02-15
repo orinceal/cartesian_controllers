@@ -144,6 +144,16 @@ ctrl::Vector6D CartesianMotionController::computeMotionError()
   double angle = error_kdl.M.GetRotAngle(rot_axis);  // rot_axis is normalized
   double distance = error_kdl.p.Normalize();
 
+  const double dist_deadband = 0.002; // 2mm
+  const double rot_deadband  = 0.01;  // ~0.57 degrees
+
+  if (std::abs(distance) < dist_deadband) {
+    distance = 0.0;
+  }
+  if (std::abs(angle) < rot_deadband) {
+    angle = 0.0;
+  }
+
   // Clamp maximal tolerated error.
   // The remaining error will be handled in the next control cycle.
   // Note that this is also the maximal offset that the

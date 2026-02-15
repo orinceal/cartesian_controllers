@@ -108,7 +108,7 @@ public:
   bool init(std::shared_ptr<rclcpp_lifecycle::LifecycleNode> nh, const KDL::Chain & chain,
             const KDL::JntArray & upper_pos_limits,
             const KDL::JntArray & lower_pos_limits,
-            const KDL::JntArray & accel_limits) override;
+            const KDL::JntArray & vel_limits, const KDL::JntArray & accel_limits) override;
 
 private:
   //! Build a generic robot model for control
@@ -137,7 +137,7 @@ private:
      * more does the end-effector (which has a unit mass of 1.0) dominate dynamic
      * behavior. Near singularities, a bigger value leads to smoother motion.
      */
-  std::atomic<double> m_min = 0.1; // 0.002; // 0.05; // 0.1;
+  std::atomic<double> m_min = 0.002; //0.1; // 0.002; // 0.05; // 0.1;
 };
 
 }  // namespace cartesian_controller_base

@@ -72,7 +72,10 @@ bool IKSolver::setStartState(
     // Add additional plausibility check just in case.
     if (joint_pos_handles[i].get().get_interface_name() == hardware_interface::HW_IF_POSITION)
     {
-      m_current_positions(i) = joint_pos_handles[i].get().get_value();
+      auto opt_value = joint_pos_handles[i].get().get_optional();
+      if (opt_value.has_value()){
+        m_current_positions(i) = opt_value.value();
+      }
       m_current_velocities(i) = 0.0;
       m_current_accelerations(i) = 0.0;
       m_last_positions(i) = m_current_positions(i);
@@ -92,22 +95,35 @@ void IKSolver::synchronizeJointPositions(
   const std::vector<std::reference_wrapper<hardware_interface::LoanedStateInterface> > &
     joint_pos_handles)
 {
+  const double alpha = 0.3;
+  static bool first_sync = true;
+
   for (size_t i = 0; i < joint_pos_handles.size(); ++i)
   {
     // Interface type should be checked by the caller.
     // Add additional plausibility check just in case.
     if (joint_pos_handles[i].get().get_interface_name() == hardware_interface::HW_IF_POSITION)
     {
-      m_current_positions(i) = joint_pos_handles[i].get().get_value();
-      m_last_positions(i) = m_current_positions(i);
+      auto opt_value = joint_pos_handles[i].get().get_optional();
+      if (opt_value.has_value()){
+        double q_isaac = opt_value.value();
+      
+        if (first_sync) {
+          m_current_positions(i) = q_isaac;
+        } else {
+        // blend new reading with existing internal state
+        m_current_positions(i) = (1.0 - alpha) * m_current_positions(i) + alpha * q_isaac;
+        }
+        m_last_positions(i) = m_current_positions(i);
+      }
     }
   }
+  first_sync = false;
 }
 
 bool IKSolver::init(std::shared_ptr<rclcpp_lifecycle::LifecycleNode> nh, const KDL::Chain & chain,
                     const KDL::JntArray & upper_pos_limits, const KDL::JntArray & lower_pos_limits,
-                    const KDL::JntArray & accel_limits)
-                    // const KDL::JntArray & lower_vel_limits, const KDL::JntArray & lower_vel_limits,
+                    const KDL::JntArray & vel_limits, const KDL::JntArray & accel_limits)
 {
   // Initialize
   m_handle = nh;
@@ -121,8 +137,7 @@ bool IKSolver::init(std::shared_ptr<rclcpp_lifecycle::LifecycleNode> nh, const K
   m_ns_positions.data = ctrl::VectorND::Zero(m_number_joints);
   m_upper_pos_limits = upper_pos_limits;
   m_lower_pos_limits = lower_pos_limits;
-  // m_upper_vel_limits = upper_vel_limits;
-  // m_lower_vel_limits = lower_vel_limits;
+  m_vel_limits = vel_limits;
   m_accel_limits = accel_limits;
 
   // Forward kinematics
@@ -159,6 +174,18 @@ void IKSolver::applyJointLimits()
     }
     m_current_positions(i) =
       std::clamp(m_current_positions(i), m_lower_pos_limits(i), m_upper_pos_limits(i));
+  }
+}
+
+void IKSolver::applyVelLimits()
+{
+  for (int i = 0; i < m_number_joints; ++i)
+  {
+    m_current_velocities(i) = 
+      std::clamp(m_current_velocities(i), -m_vel_limits(i), m_vel_limits(i));
+    if (std::abs(m_current_velocities(i)) < m_vel_deadband) {
+      m_current_velocities(i) = 0.0;
+    }
   }
 }
 
