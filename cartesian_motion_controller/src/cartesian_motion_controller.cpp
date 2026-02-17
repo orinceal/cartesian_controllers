@@ -102,6 +102,12 @@ CartesianMotionController::on_deactivate(const rclcpp_lifecycle::State & previou
 controller_interface::return_type CartesianMotionController::update(const rclcpp::Time & time,
                                                                     const rclcpp::Duration & period)
 {
+  KDL::Frame active_target;
+  // get current target
+  {
+    std::lock_guard<std::mutex> lock(m_target_mutex);
+    active_target = m_target_frame;
+  }
   // Synchronize the internal model and the real robot
   Base::m_ik_solver->synchronizeJointPositions(Base::m_joint_state_pos_handles);
 
@@ -116,8 +122,8 @@ controller_interface::return_type CartesianMotionController::update(const rclcpp
     auto internal_period = rclcpp::Duration::from_seconds(0.02);
 
     // Compute the motion error = target - current.
-    ctrl::Vector6D error = computeMotionError();
-
+    ctrl::Vector6D error = computeMotionError(active_target);
+    // RCLCPP_INFO(get_node()->get_logger(), "iteration: %u, error: %f %f %f %f %f %f", i, error(0), error(1), error(2), error(3), error(4), error(5));
     // Turn Cartesian error into joint motion
     Base::computeJointControlCmds(error, internal_period);
   }
@@ -128,55 +134,73 @@ controller_interface::return_type CartesianMotionController::update(const rclcpp
   return controller_interface::return_type::OK;
 }
 
-ctrl::Vector6D CartesianMotionController::computeMotionError()
+ctrl::Vector6D CartesianMotionController::computeMotionError(const KDL::Frame& target_frame)
 {
   // Compute motion error wrt robot_base_link
   m_current_frame = Base::m_ik_solver->getEndEffectorPose();
 
   // Transformation from target -> current corresponds to error = target - current
-  KDL::Frame error_kdl;
-  error_kdl.M = m_target_frame.M * m_current_frame.M.Inverse();
-  error_kdl.p = m_target_frame.p - m_current_frame.p;
+  // KDL::Frame error_kdl;
+  KDL::Vector pos_err = target_frame.p - m_current_frame.p;
+  KDL::Rotation rot_err = target_frame.M * m_current_frame.M.Inverse();
 
   // Use Rodrigues Vector for a compact representation of orientation errors
   // Only for angles within [0,Pi)
   KDL::Vector rot_axis = KDL::Vector::Zero();
-  double angle = error_kdl.M.GetRotAngle(rot_axis);  // rot_axis is normalized
-  double distance = error_kdl.p.Normalize();
+  double angle = rot_err.GetRotAngle(rot_axis);  // rot_axis is normalized
+  //double distance = error_kdl.p.Normalize();
 
-  const double dist_deadband = 0.002; // 2mm
-  const double rot_deadband  = 0.01;  // ~0.57 degrees
-
-  if (std::abs(distance) < dist_deadband) {
-    distance = 0.0;
-  }
-  if (std::abs(angle) < rot_deadband) {
-    angle = 0.0;
-  }
+  // deadband parameters
+  const double dist_deadband = 0.002;      // 2mm (absolute zero)
+  // const double dist_width = 0.004;    // 5mm (fade out zone)
+  const double rot_deadband  = 0.02;       // ~0.5 degrees
+  // const double rot_width = 0.02;     // ~1.1 degrees
 
   // Clamp maximal tolerated error.
   // The remaining error will be handled in the next control cycle.
   // Note that this is also the maximal offset that the
   // cartesian_compliance_controller can use to build up a restoring stiffness
   // wrench.
-  const double max_angle = 0.2;
-  const double max_distance = 0.2;
-  angle = std::clamp(angle, -max_angle, max_angle);
-  distance = std::clamp(distance, -max_distance, max_distance);
+  const double max_distance = 0.05;
+  const double max_angle = 0.1;
+  ctrl::Vector6D error;
 
-  // Scale errors to allowed magnitudes
-  rot_axis = rot_axis * angle;
-  error_kdl.p = error_kdl.p * distance;
+  // apply deadband to each linear axis
+  for (int i = 0; i < 3; ++i){
+    double d = std::abs(pos_err(i));
+    if (d < dist_deadband) {
+      error(i) = 0.0;
+    } else {
+      // double s = std::clamp((d - dist_deadband) / dist_width, 0.0, 1.0);
+      error(i) = std::clamp(pos_err(i), -max_distance, max_distance);
+    }
+  }
+
+  // apply deadband to rotation
+  if (std::abs(angle) < rot_deadband) {
+    error(3) = error(4) = error(5) = 0.0;
+  } else {
+    // double s_rot  = std::clamp((angle - rot_deadband) / rot_width, 0.0, 1.0);
+    //KDL::Vector scaled_rot = rot_axis * (angle * s_rot);
+    angle = std::clamp(angle, -max_angle, max_angle);
+    rot_axis = rot_axis * angle;
+    error(3) = rot_axis(0);
+    error(4) = rot_axis(1);
+    error(5) = rot_axis(2);
+  }
+
+  // // Scale errors to allowed magnitudes
+  // rot_axis = rot_axis * angle;
+  // error_kdl.p = error_kdl.p * distance;
 
   // Reassign values
-  ctrl::Vector6D error;
-  error(0) = error_kdl.p.x();
-  error(1) = error_kdl.p.y();
-  error(2) = error_kdl.p.z();
-  error(3) = rot_axis(0);
-  error(4) = rot_axis(1);
-  error(5) = rot_axis(2);
-
+  // error(0) = error_kdl.p.x();
+  // error(1) = error_kdl.p.y();
+  // error(2) = error_kdl.p.z();
+  // error(3) = rot_axis(0);
+  // error(4) = rot_axis(1);
+  // error(5) = rot_axis(2);
+  
   return error;
 }
 
@@ -207,7 +231,7 @@ void CartesianMotionController::targetFrameCallback(
                          Base::m_robot_base_link.c_str(), target->header.frame_id.c_str());
     return;
   }
-
+  std::lock_guard<std::mutex> lock(m_target_mutex);
   m_target_frame = KDL::Frame(
     KDL::Rotation::Quaternion(target->pose.orientation.x, target->pose.orientation.y,
                               target->pose.orientation.z, target->pose.orientation.w),

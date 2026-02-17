@@ -109,14 +109,14 @@ trajectory_msgs::msg::JointTrajectoryPoint ForwardDynamicsSolver::getJointContro
   //   return 
   // }
   // add additional damping from redundant manipulator F_ext
-  Eigen::VectorXd q_error = m_ns_positions.data - m_current_positions.data;
-  Eigen::VectorXd q_dot_error = -m_current_velocities.data; // assume q_dot_ns = 0
-  double kp_null = 1.0;
-  double kd_null = 0.2;
-  Eigen::VectorXd null_space_bias = kp_null * q_error + kd_null * q_dot_error;
+  // Eigen::VectorXd q_error = m_ns_positions.data - m_current_positions.data;
+  // Eigen::VectorXd q_dot_error = -m_current_velocities.data; // assume q_dot_ns = 0
+  // double kp_null = 1.0;
+  // double kd_null = 0.2;
+  // Eigen::VectorXd null_space_bias = kp_null * q_error + kd_null * q_dot_error;
 
   Eigen::VectorXd weights = Eigen::VectorXd::Ones(m_number_joints);
-  weights(0) = 20.0; // higher weight for slider 
+  //weights(0) = 20.0; // higher weight for slider 
   Eigen::MatrixXd W_inv = weights.cwiseInverse().asDiagonal();
   Eigen::MatrixXd J = m_jnt_jacobian.data;
   double lambda = 0.05;
@@ -131,14 +131,16 @@ trajectory_msgs::msg::JointTrajectoryPoint ForwardDynamicsSolver::getJointContro
   Eigen::MatrixXd I = Eigen::MatrixXd::Identity(m_number_joints, m_number_joints);
   //Eigen::MatrixXd P = I - (J_pinv * m_jnt_jacobian.data);
   Eigen::MatrixXd P = I - (J_pinv_wdls * J);
-  Eigen::VectorXd tau_ns = P * null_space_bias;
+  // Eigen::VectorXd tau_ns = P * null_space_bias;
+  Eigen::VectorXd tau_repulse = calculateRepulsionGradient();
+  Eigen::VectorXd tau_nullsp = P * tau_repulse;
 
   // joint tip accelerations J^T f
   Eigen::VectorXd tau_tip_accel = m_jnt_jacobian.data.transpose() * net_force;
 
   // calculate damping data
-  Eigen::VectorXd damping_coeffs = Eigen::VectorXd::Constant(m_number_joints, 0.005);
-  damping_coeffs(0) = 0.3;
+  Eigen::VectorXd damping_coeffs = Eigen::VectorXd::Constant(m_number_joints, 0.002);
+  damping_coeffs(0) = 4.0;
   Eigen::VectorXd tau_damping = damping_coeffs.cwiseProduct(m_last_velocities.data);
 
   // joint accelerations according to: \f$ \ddot{q} = H^{-1} ( J^T f + B \dot{q}) \f$
@@ -149,12 +151,9 @@ trajectory_msgs::msg::JointTrajectoryPoint ForwardDynamicsSolver::getJointContro
   m_current_velocities.data *= 0.9;  // 10 % global damping against unwanted null space motion.
                                      // Will cause exponential slow-down without input.
   applyVelLimits();
-  RCLCPP_INFO(nh_->get_logger(), "velocities: %f %f %f %f %f %f %f", m_current_velocities(0), m_current_velocities(1), m_current_velocities(2),
-              m_current_velocities(3), m_current_velocities(4), m_current_velocities(5), m_current_velocities(6));
-
   m_current_positions.data = m_last_positions.data + m_current_velocities.data * period.seconds();
-  RCLCPP_INFO(nh_->get_logger(), "positions: %f %f %f %f %f %f %f", m_current_positions(0), m_current_positions(1), m_current_positions(2),
-              m_current_positions(3), m_current_positions(4), m_current_positions(5), m_current_positions(6));
+  // RCLCPP_INFO(nh_->get_logger(), "positions: %f %f %f %f %f %f %f", m_current_positions(0), m_current_positions(1), m_current_positions(2),
+  //             m_current_positions(3), m_current_positions(4), m_current_positions(5), m_current_positions(6));
 
   // Make sure positions stay in allowed margins
   applyJointLimits();
@@ -251,8 +250,11 @@ bool ForwardDynamicsSolver::init(std::shared_ptr<rclcpp_lifecycle::LifecycleNode
 bool ForwardDynamicsSolver::buildGenericModel()
 {
   // Set all masses and inertias to minimal (yet stable) values.
-  double ip_min = 0.01; //0.002; //0.01;
-  for (size_t i = 0; i < m_chain.segments.size(); ++i)
+  double ip_min = 0.001; //0.00001; //0.005; //0.002; //0.01;
+
+  jnt_seg_idx.resize(m_number_joints);
+  int j = 0;
+  for (size_t i = 0; i < m_chain.segments.size(); ++i)  
   {
     // Fixed joint segment
     if (m_chain.segments[i].getJoint().getType() == KDL::Joint::None)
@@ -262,7 +264,9 @@ bool ForwardDynamicsSolver::buildGenericModel()
     else if (m_chain.segments[i].getJoint().getType() == KDL::Joint::TransAxis) {
       // set higher mass for slider joint
       m_chain.segments[i].setInertia(
-      KDL::RigidBodyInertia(10.0, KDL::Vector::Zero(), KDL::RotationalInertia(2.0, 2.0, 2.0)));
+      KDL::RigidBodyInertia(0.7, KDL::Vector::Zero(), KDL::RotationalInertia(0.7, 0.7, 0.7)));
+      jnt_seg_idx.at(j) = i;
+      j++;
     } 
     else  // relatively moving segment
     {
@@ -274,6 +278,8 @@ bool ForwardDynamicsSolver::buildGenericModel()
                                                      ip_min   // izz
                                                      // ixy, ixy, iyz default to 0.0
                                                      )));
+      jnt_seg_idx.at(j) = i;
+      j++;
     }
   }
 
@@ -283,7 +289,6 @@ bool ForwardDynamicsSolver::buildGenericModel()
   double ip = 1;
   m_chain.segments[m_chain.segments.size() - 1].setInertia(
     KDL::RigidBodyInertia(m, KDL::Vector::Zero(), KDL::RotationalInertia(ip, ip, ip)));
-
   return true;
 }
 
@@ -301,6 +306,54 @@ void ForwardDynamicsSolver::nsStateCallback(const sensor_msgs::msg::JointState::
       }
     }
   }
+}
+Eigen::VectorXd ForwardDynamicsSolver::calculateRepulsionGradient()
+{
+  Eigen::VectorXd tau_repulse = Eigen::VectorXd::Zero(m_number_joints);
+  
+  const double rho = 0.15;  // Influence zone (15cm)
+  const double eta = 0.01;  // Scaling gain
+  
+  std::vector<int> joint_idx = {5, 6};
+  std::vector<int> valid_seg_idx;
+  valid_seg_idx.reserve(joint_idx.size());
+
+  // get joints from elbow onwards near to wall
+  for (int idx : joint_idx){
+    if (idx >= 0 && idx < m_number_joints) {
+      valid_seg_idx.push_back(jnt_seg_idx[idx]);
+    } else {
+      RCLCPP_WARN(nh_->get_logger(), "joint index for repulsion calculation is out of bounds!");
+      return tau_repulse;
+    }
+  }
+  for (int seg_idx : valid_seg_idx) {
+    KDL::Frame segment_frame;
+
+    m_fk_pos_solver->JntToCart(m_current_positions, segment_frame, seg_idx);
+    Eigen::Vector3d p_segment(segment_frame.p.x(), segment_frame.p.y(), segment_frame.p.z());
+
+    // calculate distance to wall by projecting on normal 
+    // d = (P_link - P_wall) . n
+    double d = (p_segment - wall_point_).dot(wall_normal_);
+
+    // calculate repulsion if within influence zone
+    if (d > 0 && d < rho)
+    {
+      // calculate repulsive force
+      double force_mag = eta * (1.0/d - 1.0/rho) * (1.0 / (d * d));
+        
+      // force vector points along normal
+      Eigen::Vector3d f_cartesian = force_mag * wall_normal_;
+
+      // map to Joint Space
+      KDL::Jacobian J_segment(m_number_joints); 
+      m_jnt_jacobian_solver->JntToJac(m_current_positions, J_segment, seg_idx);
+      // project the 3D force through top 3 rows (linear part) of the Jacobian
+      tau_repulse += J_segment.data.topRows(3).transpose() * f_cartesian;
+    }
+  }
+  return tau_repulse;
 }
 
 }  // namespace cartesian_controller_base

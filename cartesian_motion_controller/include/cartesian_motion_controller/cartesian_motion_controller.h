@@ -46,7 +46,7 @@
 #include <controller_interface/controller_interface.hpp>
 
 #include "geometry_msgs/msg/pose_stamped.hpp"
-
+#include <mutex>
 namespace cartesian_motion_controller
 {
 /**
@@ -104,9 +104,10 @@ protected:
      *
      * @return The error as a 6-dim vector (linear, angular) w.r.t to the robot base link
      */
-  ctrl::Vector6D computeMotionError();
+  ctrl::Vector6D computeMotionError(const KDL::Frame& target_frame);
   KDL::Frame m_target_frame;
   KDL::Frame m_current_frame;
+  std::mutex m_target_mutex;
 
   void targetFrameCallback(const geometry_msgs::msg::PoseStamped::SharedPtr target);
 

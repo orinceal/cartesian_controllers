@@ -95,7 +95,7 @@ void IKSolver::synchronizeJointPositions(
   const std::vector<std::reference_wrapper<hardware_interface::LoanedStateInterface> > &
     joint_pos_handles)
 {
-  const double alpha = 0.3;
+  const double alpha = 0.01;
   static bool first_sync = true;
 
   for (size_t i = 0; i < joint_pos_handles.size(); ++i)
