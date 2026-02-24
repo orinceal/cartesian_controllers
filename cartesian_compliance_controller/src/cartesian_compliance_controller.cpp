@@ -64,14 +64,35 @@ CartesianComplianceController::on_init()
 
   auto_declare<std::string>("compliance_ref_link", "");
 
-  constexpr double default_lin_stiff = 500.0;
-  constexpr double default_rot_stiff = 50.0;
-  auto_declare<double>("stiffness.trans_x", default_lin_stiff);
-  auto_declare<double>("stiffness.trans_y", default_lin_stiff);
-  auto_declare<double>("stiffness.trans_z", default_lin_stiff);
-  auto_declare<double>("stiffness.rot_x", default_rot_stiff);
-  auto_declare<double>("stiffness.rot_y", default_rot_stiff);
-  auto_declare<double>("stiffness.rot_z", default_rot_stiff);
+  // declare virtual model spring parameters
+  constexpr double default_lin_stiff = 500.0; // N/m
+  constexpr double default_rot_stiff = 30.0;  // Nm/rad
+  constexpr double default_lin_damp = 310.0;  // Ns/m
+  constexpr double default_rot_damp = 75.0;  // Nms/rad
+  constexpr double default_lin_inertial = 1.0; // kg
+  constexpr double default_rot_inertial = 0.4; // kgm2
+  // stiffness
+  auto_declare<double>("compliance.trans_x.c", default_lin_stiff);
+  auto_declare<double>("compliance.trans_y.c", default_lin_stiff);
+  auto_declare<double>("compliance.trans_z.c", default_lin_stiff);
+  auto_declare<double>("compliance.rot_x.c", default_rot_stiff);
+  auto_declare<double>("compliance.rot_y.c", default_rot_stiff);
+  auto_declare<double>("compliance.rot_z.c", default_rot_stiff);
+  // damping
+  auto_declare<double>("compliance.trans_x.k", default_lin_damp);
+  auto_declare<double>("compliance.trans_y.k", default_lin_damp);
+  auto_declare<double>("compliance.trans_z.k", default_lin_damp);
+  auto_declare<double>("compliance.rot_x.k", default_rot_damp);
+  auto_declare<double>("compliance.rot_y.k", default_rot_damp);
+  auto_declare<double>("compliance.rot_z.k", default_rot_damp);
+  // inertial
+  auto_declare<double>("compliance.trans_x.I", default_lin_inertial);
+  auto_declare<double>("compliance.trans_y.I", default_lin_inertial);
+  auto_declare<double>("compliance.trans_z.I", default_lin_inertial);
+  auto_declare<double>("compliance.rot_x.I", default_rot_inertial);
+  auto_declare<double>("compliance.rot_y.I", default_rot_inertial);
+  auto_declare<double>("compliance.rot_z.I", default_rot_inertial);
+
 
   return TYPE::SUCCESS;
 }
@@ -96,6 +117,30 @@ CartesianComplianceController::on_configure(const rclcpp_lifecycle::State & prev
                                                     << Base::m_end_effector_link);
     return TYPE::ERROR;
   }
+
+  m_stiffness_diag[0] = get_node()->get_parameter("compliance.trans_x.c").as_double();
+  m_stiffness_diag[1] = get_node()->get_parameter("compliance.trans_y.c").as_double();
+  m_stiffness_diag[2] = get_node()->get_parameter("compliance.trans_z.c").as_double();
+  m_stiffness_diag[3] = get_node()->get_parameter("compliance.rot_x.c").as_double();
+  m_stiffness_diag[4] = get_node()->get_parameter("compliance.rot_y.c").as_double();
+  m_stiffness_diag[5] = get_node()->get_parameter("compliance.rot_z.c").as_double();
+
+  m_inertia_diag[0] = get_node()->get_parameter("compliance.trans_x.I").as_double();
+  m_inertia_diag[1] = get_node()->get_parameter("compliance.trans_y.I").as_double();
+  m_inertia_diag[2] = get_node()->get_parameter("compliance.trans_z.I").as_double();
+  m_inertia_diag[3] = get_node()->get_parameter("compliance.rot_x.I").as_double();
+  m_inertia_diag[4] = get_node()->get_parameter("compliance.rot_y.I").as_double();
+  m_inertia_diag[5] = get_node()->get_parameter("compliance.rot_z.I").as_double();
+
+  calculateCriticalDamping();
+  // convert to base frame
+  // Base::displayInBaseLink(m_stiffness, m_compliance_ref_link)
+
+  m_param_handler = std:make_shared<rclcpp::ParameterEventHandler>(get_node());
+  auto cb = [this](const rcl_interfaces::msg::ParameterEvent & event) {
+    // logic to update m_stiffness and m_inertia when parameters change
+  };
+  m_cb_handle = m_param_handler->add_parameter_event_callback(cb);
 
   // Make sure sensor wrenches are interpreted correctly
   ForceBase::setFtSensorReferenceFrame(m_compliance_ref_link);
@@ -132,6 +177,13 @@ CartesianComplianceController::on_deactivate(const rclcpp_lifecycle::State & pre
 controller_interface::return_type CartesianComplianceController::update(
   const rclcpp::Time & time, const rclcpp::Duration & period)
 {
+
+  KDL::Frame active_target;
+  // get current target
+  {
+    std::lock_guard<std::mutex> lock(m_target_mutex);
+    active_target = m_target_frame;
+  }  
   // Synchronize the internal model and the real robot
   Base::m_ik_solver->synchronizeJointPositions(Base::m_joint_state_pos_handles);
 
@@ -143,8 +195,10 @@ controller_interface::return_type CartesianComplianceController::update(
     // control cycle.
     auto internal_period = rclcpp::Duration::from_seconds(0.02);
 
+    Base::m_ik_solver->updateKinematics();
+
     // Compute the net force
-    ctrl::Vector6D error = computeComplianceError();
+    ctrl::Vector6D error = computeComplianceError(active_target, internal_period);
 
     // Turn Cartesian error into joint motion
     Base::computeJointControlCmds(error, internal_period);
@@ -156,27 +210,41 @@ controller_interface::return_type CartesianComplianceController::update(
   return controller_interface::return_type::OK;
 }
 
-ctrl::Vector6D CartesianComplianceController::computeComplianceError()
+ctrl::Vector6D CartesianComplianceController::computeComplianceError(const KDL::Frame& target_frame, const rclcpp::Duration& period)
 {
-  ctrl::Vector6D tmp;
-  tmp[0] = get_node()->get_parameter("stiffness.trans_x").as_double();
-  tmp[1] = get_node()->get_parameter("stiffness.trans_y").as_double();
-  tmp[2] = get_node()->get_parameter("stiffness.trans_z").as_double();
-  tmp[3] = get_node()->get_parameter("stiffness.rot_x").as_double();
-  tmp[4] = get_node()->get_parameter("stiffness.rot_y").as_double();
-  tmp[5] = get_node()->get_parameter("stiffness.rot_z").as_double();
+  double dt = period.seconds();
+  ctrl::Vector6D x_error = MotionBase::computeMotionError(target_frame);
+  ctrl::Vector6D x_dot = Base::m_ik_solver->getEndEffectorVel();
+  ctrl::Vector6D x_ddot = (x_dot - m_last_x_dot) / dt;
+  
+  ctrl::Vector6D net_force;
+  for (int i=0; i < 6; ++i)
+  {
+    net_force[i] = (m_stiffness_diag[i] * x_error[i])
+                 - (m_damping_diag[i] * x_dot[i])
+                 - (m_inertia_diag[i] * x_ddot[i]);
+  }
 
-  m_stiffness = tmp.asDiagonal();
+  ctrl::Vector6D net_force += ForceBase::computeForceError();
 
-  ctrl::Vector6D net_force =
+    // // Spring force in base orientation
+    // Base::displayInBaseLink(m_stiffness, m_compliance_ref_link) * MotionBase::computeMotionError(target_frame)
 
-    // Spring force in base orientation
-    Base::displayInBaseLink(m_stiffness, m_compliance_ref_link) * MotionBase::computeMotionError()
+    // // Sensor and target force in base orientation
+    // + ForceBase::computeForceError();
 
-    // Sensor and target force in base orientation
-    + ForceBase::computeForceError();
+  m_last_x_dot = x_dot;
 
   return net_force;
+}
+
+void CartesianComplianceController::calculateCriticalDamping(double zeta)
+{
+  for (int i = 0; i < 6; ++i)
+  {
+    // D = 2 * zeta * sqrt(M * K)
+    m_damping_diag[i] = 2.0 * zeta * std::sqrt(stiffness[i] * inertia[i]);
+  }
 }
 
 }  // namespace cartesian_compliance_controller

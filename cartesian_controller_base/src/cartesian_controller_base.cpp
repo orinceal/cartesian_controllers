@@ -189,16 +189,17 @@ CartesianControllerBase::on_configure(const rclcpp_lifecycle::State & previous_s
   }
 
   // Parse joint limits
-  KDL::JntArray upper_pos_limits(m_joint_names.size());
-  KDL::JntArray lower_pos_limits(m_joint_names.size());
-  KDL::JntArray vel_limits(m_joint_names.size());
-  KDL::JntArray accel_limits(m_joint_names.size());
+  m_number_joints = m_joint_names.size();
+  KDL::JntArray upper_pos_limits(m_number_joints);
+  KDL::JntArray lower_pos_limits(m_number_joints);
+  KDL::JntArray vel_limits(m_number_joints);
+  KDL::JntArray accel_limits(m_number_joints);
   m_has_vel_limits = get_node()->get_parameter("solver.velocity_limits_on").as_bool();
   m_vel_scale = get_node()->get_parameter("robot_description_planning.default_velocity_scaling_factor").as_double();
   m_has_accel_limits = get_node()->get_parameter("solver.acceleration_limits_on").as_bool();
   m_accel_scale = get_node()->get_parameter("robot_description_planning.default_acceleration_scaling_factor").as_double();
   
-  for (size_t i = 0; i < m_joint_names.size(); ++i)
+  for (size_t i = 0; i < m_number_joints; ++i)
   {
     if (!robot_model.getJoint(m_joint_names[i]))
     {
@@ -416,7 +417,7 @@ void CartesianControllerBase::computeJointControlCmds(const ctrl::Vector6D & err
   // Simulate one step forward
   m_simulated_joint_motion = m_ik_solver->getJointControlCmds(period, m_cartesian_input);
 
-  m_ik_solver->updateKinematics();
+  // m_ik_solver->updateKinematics(); // change to update before computing errors in loop
 }
 
 ctrl::Vector6D CartesianControllerBase::displayInBaseLink(const ctrl::Vector6D & vector,

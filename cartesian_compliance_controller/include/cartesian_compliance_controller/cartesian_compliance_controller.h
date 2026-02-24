@@ -99,10 +99,19 @@ private:
      *
      * @return The remaining error wrench, given in robot base frame
      */
-  ctrl::Vector6D computeComplianceError();
+  ctrl::Vector6D computeComplianceError(const KDL::Frame & target_frame, const rclcpp::Duration& period);
+  void calculateCriticalDamping(double zeta = 1.0);
+  
+  // parameter callback 
+  std::shared_ptr<rclcpp::ParameterEventHandler> m_param_handler;
+  std::shared_ptr<rclcpp::ParameterCallbackHandler> m_cb_handle;
 
-  ctrl::Matrix6D m_stiffness;
+  ctrl::Vector6D m_stiffness_diag;
+  ctrl::Vector6D m_damping_diag;
+  ctrl::Vector6D m_inertia_diag;
   std::string m_compliance_ref_link;
+  ctrl::Vector6D m_last_x_error;
+  ctrl::Vector6D m_last_x_dot;
 };
 
 }  // namespace cartesian_compliance_controller

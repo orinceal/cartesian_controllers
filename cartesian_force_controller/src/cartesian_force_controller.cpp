@@ -128,13 +128,12 @@ controller_interface::return_type CartesianForceController::update(const rclcpp:
   // vanishes.  The internal 'simulation time' is deliberately independent of
   // the outer control cycle.
   auto internal_period = rclcpp::Duration::from_seconds(0.02);
-
+  Base::m_ik_solver->updateKinematics();
   // Compute the net force
   ctrl::Vector6D error = computeForceError();
 
   // Turn Cartesian error into joint motion
   Base::computeJointControlCmds(error, internal_period);
-
   // Write final commands to the hardware interface
   Base::writeJointControlCmds();
 

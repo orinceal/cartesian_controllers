@@ -55,6 +55,7 @@
 
 #include "rclcpp/node.hpp"
 #include "sensor_msgs/msg/joint_state.hpp"
+#include "geometry_msgs/msg/pose.hpp"
 
 namespace cartesian_controller_base
 {
@@ -109,13 +110,16 @@ public:
             const KDL::JntArray & upper_pos_limits,
             const KDL::JntArray & lower_pos_limits,
             const KDL::JntArray & vel_limits, const KDL::JntArray & accel_limits) override;
-
+  void updateKinematics() override;
 private:
   //! Build a generic robot model for control
   bool buildGenericModel();
   // get desired null space joint states
-  void nsStateCallback(const sensor_msgs::msg::JointState::SharedPtr msg);
+//   void nsStateCallback(const sensor_msgs::msg::JointState::SharedPtr msg);
+  void wallPtCallback(const geometry_msgs::msg::Pose::SharedPtr msg);
+
   Eigen::VectorXd calculateRepulsionGradient();
+  Eigen::VectorXd calculatePosturalBias();
 
   // Forward dynamics
   std::shared_ptr<KDL::ChainJntToJacSolver> m_jnt_jacobian_solver;
@@ -123,7 +127,8 @@ private:
   std::shared_ptr<KDL::ChainDynParam> m_gravity_solver;
   KDL::Jacobian m_jnt_jacobian;
   KDL::JntSpaceInertiaMatrix m_jnt_space_inertia;
-  rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr m_ns_jnt_sub;
+//   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr m_ns_jnt_sub;
+  rclcpp::Subscription<geometry_msgs::msg::Pose>::SharedPtr m_wall_info_sub;
   KDL::JntArray gravity_comp;
 
   // Dynamic parameters
@@ -133,10 +138,11 @@ private:
 
   double m_gravity_factor;
   // Nullspace configuration 
-  static inline const Eigen::Vector3d DEFAULT_NORMAL{-0.9997, 0.0039,  -0.0260};
-  static inline const Eigen::Vector3d DEFAULT_POINT{1.5583340887, 0.10459256172180176, 0.8};
-  Eigen::Vector3d wall_normal_ = DEFAULT_NORMAL;
-  Eigen::Vector3d wall_point_ = DEFAULT_POINT;
+//   static inline const Eigen::Vector3d DEFAULT_NORMAL{-0.9997, 0.0039,  -0.0260};
+//   static inline const Eigen::Vector3d DEFAULT_POINT{1.5583340887, 0.10459256172180176, 0.8};
+  Eigen::Vector3d wall_normal_;
+  Eigen::Vector3d wall_point_;
+  bool has_wall_point_{false};
   std::vector<int> jnt_seg_idx;
   /**
      * Virtual link mass

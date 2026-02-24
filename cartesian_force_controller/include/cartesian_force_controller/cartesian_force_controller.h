@@ -122,6 +122,6 @@ private:
   bool m_hand_frame_control;
 };
 
-}  // namespace cartesian_force_controller
+}  // namespace cartesfian_force_controller
 
 #endif

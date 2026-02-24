@@ -120,7 +120,7 @@ controller_interface::return_type CartesianMotionController::update(const rclcpp
     // The internal 'simulation time' is deliberately independent of the outer
     // control cycle.
     auto internal_period = rclcpp::Duration::from_seconds(0.02);
-
+    Base::m_ik_solver->updateKinematics();
     // Compute the motion error = target - current.
     ctrl::Vector6D error = computeMotionError(active_target);
     // RCLCPP_INFO(get_node()->get_logger(), "iteration: %u, error: %f %f %f %f %f %f", i, error(0), error(1), error(2), error(3), error(4), error(5));
@@ -161,7 +161,7 @@ ctrl::Vector6D CartesianMotionController::computeMotionError(const KDL::Frame& t
   // Note that this is also the maximal offset that the
   // cartesian_compliance_controller can use to build up a restoring stiffness
   // wrench.
-  const double max_distance = 0.05;
+  const double max_distance = 0.1;
   const double max_angle = 0.1;
   ctrl::Vector6D error;
 

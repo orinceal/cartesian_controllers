@@ -158,7 +158,7 @@ public:
      * Call this periodically to update the internal simulation's forward
      * kinematics.
      */
-  void updateKinematics();
+  virtual void updateKinematics();
 
 protected:
   /**

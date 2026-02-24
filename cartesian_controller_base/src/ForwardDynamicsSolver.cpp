@@ -78,11 +78,11 @@ trajectory_msgs::msg::JointTrajectoryPoint ForwardDynamicsSolver::getJointContro
   rclcpp::Duration period, const ctrl::Vector6D & net_force)
 {  
   // Compute joint space inertia matrix with actualized link masses
-  buildGenericModel();
-  m_jnt_space_inertia_solver->JntToMass(m_current_positions, m_jnt_space_inertia);
+  // buildGenericModel();
+  // m_jnt_space_inertia_solver->JntToMass(m_current_positions, m_jnt_space_inertia);
 
   // Compute joint jacobian
-  m_jnt_jacobian_solver->JntToJac(m_current_positions, m_jnt_jacobian);
+  // m_jnt_jacobian_solver->JntToJac(m_current_positions, m_jnt_jacobian);
 
   // Eigen::VectorXd tau_gravity = Eigen::VectorXd::Zero(m_number_joints);
   // double gravity = 9.81;
@@ -116,10 +116,10 @@ trajectory_msgs::msg::JointTrajectoryPoint ForwardDynamicsSolver::getJointContro
   // Eigen::VectorXd null_space_bias = kp_null * q_error + kd_null * q_dot_error;
 
   Eigen::VectorXd weights = Eigen::VectorXd::Ones(m_number_joints);
-  //weights(0) = 20.0; // higher weight for slider 
+  weights(0) = 3.0; // higher weight for slider 
   Eigen::MatrixXd W_inv = weights.cwiseInverse().asDiagonal();
   Eigen::MatrixXd J = m_jnt_jacobian.data;
-  double lambda = 0.05;
+  double lambda =  0.05;
 
   // J_pinv = W_inv * J^T * (J * W_inv * J^T + lambda^2 * I)^-1
   Eigen::MatrixXd JJT_weighted = J * W_inv * J.transpose();
@@ -133,7 +133,8 @@ trajectory_msgs::msg::JointTrajectoryPoint ForwardDynamicsSolver::getJointContro
   Eigen::MatrixXd P = I - (J_pinv_wdls * J);
   // Eigen::VectorXd tau_ns = P * null_space_bias;
   Eigen::VectorXd tau_repulse = calculateRepulsionGradient();
-  Eigen::VectorXd tau_nullsp = P * tau_repulse;
+  Eigen::VectorXd tau_posture = calculatePosturalBias();
+  Eigen::VectorXd tau_nullsp = P * (tau_repulse + tau_posture);
 
   // joint tip accelerations J^T f
   Eigen::VectorXd tau_tip_accel = m_jnt_jacobian.data.transpose() * net_force;
@@ -150,6 +151,7 @@ trajectory_msgs::msg::JointTrajectoryPoint ForwardDynamicsSolver::getJointContro
   m_current_velocities.data = m_last_velocities.data + m_current_accelerations.data * period.seconds();
   m_current_velocities.data *= 0.9;  // 10 % global damping against unwanted null space motion.
                                      // Will cause exponential slow-down without input.
+
   applyVelLimits();
   m_current_positions.data = m_last_positions.data + m_current_velocities.data * period.seconds();
   // RCLCPP_INFO(nh_->get_logger(), "positions: %f %f %f %f %f %f %f", m_current_positions(0), m_current_positions(1), m_current_positions(2),
@@ -157,8 +159,6 @@ trajectory_msgs::msg::JointTrajectoryPoint ForwardDynamicsSolver::getJointContro
 
   // Make sure positions stay in allowed margins
   applyJointLimits();
-  // RCLCPP_INFO(nh_->get_logger(), "velocities: %f %f %f %f %f %f %f", m_current_velocities.data(0), m_current_velocities.data(1), m_current_velocities.data(2),
-  //             m_current_velocities.data(3), m_current_velocities.data(4), m_current_velocities.data(5), m_current_velocities.data(6));
   // Apply results
   trajectory_msgs::msg::JointTrajectoryPoint control_cmd;
   for (int i = 0; i < m_number_joints; ++i)
@@ -227,24 +227,39 @@ bool ForwardDynamicsSolver::init(std::shared_ptr<rclcpp_lifecycle::LifecycleNode
   }
 
   // Forward dynamics
-  m_jnt_jacobian_solver.reset(new KDL::ChainJntToJacSolver(m_chain));
-  m_jnt_space_inertia_solver.reset(new KDL::ChainDynParam(m_chain, KDL::Vector::Zero()));
+  m_jnt_jacobian_solver = std::make_shared<KDL::ChainJntToJacSolver(m_chain);
+  m_jnt_space_inertia_solver = std::make_shared<KDL::ChainDynParam(m_chain, KDL::Vector::Zero());
+  // m_jnt_jacobian_solver.reset(new KDL::ChainJntToJacSolver(m_chain));
+  // m_jnt_space_inertia_solver.reset(new KDL::ChainDynParam(m_chain, KDL::Vector::Zero()));
   // m_jnt_space_gravity_solver.reset(new KDL::ChainDynParam(m_chain, KDL::Vector::Zero()));
   m_jnt_jacobian.resize(m_number_joints);
   m_jnt_space_inertia.resize(m_number_joints);
-
   // Set the initial value if provided at runtime, else use default value.
   m_min = auto_declare(m_params + ".link_mass", 0.1);
 
   // initialize null space safe joint position subscriber
-  m_ns_jnt_sub = nh->create_subscription<sensor_msgs::msg::JointState>("/optimal_joints", 1,
-  std::bind(&ForwardDynamicsSolver::nsStateCallback, this, std::placeholders::_1));
-  
+  // m_ns_jnt_sub = nh->create_subscription<sensor_msgs::msg::JointState>("/optimal_joints", 1,
+  // std::bind(&ForwardDynamicsSolver::nsStateCallback, this, std::placeholders::_1));
+
+  // initialize wall origin subscriber
+  auto qos = rclcpp::QoS(1).transient_local();
+  m_wall_info_sub = nh->create_subscription<geometry_msgs::msg::Pose>("/wall_info", qos,
+  std::bind(&ForwardDynamicsSolver::wallPtCallback, this, std::placeholders::_1));
+
   RCLCPP_INFO(nh->get_logger(), "Forward dynamics solver initialized");
   RCLCPP_INFO(nh->get_logger(), "Forward dynamics solver has control over %i joints",
               m_number_joints);
 
   return true;
+}
+
+void ForwardDynamicsSolver::updateKinematics() {
+  // Compute joint space inertia matrix with actualized link masses
+  m_jnt_space_inertia_solver->JntToMass(m_current_positions, m_jnt_space_inertia);
+  // Compute joint jacobian
+  m_jnt_jacobian_solver->JntToJac(m_current_positions, m_jnt_jacobian);
+
+  IKSolver::updateKinemaitcs();
 }
 
 bool ForwardDynamicsSolver::buildGenericModel()
@@ -264,7 +279,7 @@ bool ForwardDynamicsSolver::buildGenericModel()
     else if (m_chain.segments[i].getJoint().getType() == KDL::Joint::TransAxis) {
       // set higher mass for slider joint
       m_chain.segments[i].setInertia(
-      KDL::RigidBodyInertia(0.7, KDL::Vector::Zero(), KDL::RotationalInertia(0.7, 0.7, 0.7)));
+      KDL::RigidBodyInertia(1.0, KDL::Vector::Zero(), KDL::RotationalInertia(1.0, 1.0, 1.0)));
       jnt_seg_idx.at(j) = i;
       j++;
     } 
@@ -292,27 +307,42 @@ bool ForwardDynamicsSolver::buildGenericModel()
   return true;
 }
 
-void ForwardDynamicsSolver::nsStateCallback(const sensor_msgs::msg::JointState::SharedPtr msg) {
-  if (msg->position.empty()) return;
+// void ForwardDynamicsSolver::nsStateCallback(const sensor_msgs::msg::JointState::SharedPtr msg) {
+//   if (msg->position.empty()) return;
 
-  // map incoming names to internal KDL order
-  for (size_t i = 0; i < msg->name.size(); ++i)
-  {
-    for (int j=0; j<m_number_joints; ++j){
-      if (msg->name[i] == m_chain.getSegment(j).getJoint().getName())
-      {
-        m_ns_positions(j) = msg->position[i];
-        break;
-      }
-    }
-  }
+//   // map incoming names to internal KDL order
+//   for (size_t i = 0; i < msg->name.size(); ++i)
+//   {
+//     for (int j=0; j<m_number_joints; ++j){
+//       if (msg->name[i] == m_chain.getSegment(j).getJoint().getName())
+//       {
+//         m_ns_positions(j) = msg->position[i];
+//         break;
+//       }
+//     }
+//   }
+// }
+
+void ForwardDynamicsSolver::wallPtCallback(const geometry_msgs::msg::Pose::SharedPtr msg) {
+  wall_point_.x() = msg->position.x;
+  wall_point_.y() = msg->position.y;
+  wall_point_.z() = msg->position.z;
+  
+  Eigen::Quaterniond q(
+    msg->orientation.w, msg->orientation.x, msg->orientation.y, msg->orientation.z);
+
+  wall_normal_ = q * Eigen::Vector3d::UnitX();
+  wall_normal_.normalize();
+  RCLCPP_DEBUG(get_logger(), "wall info received. Normal: [%f, %f, %f]", wall_normal_.x(), wall_normal_.y(), wall_normal_.z());
 }
+
 Eigen::VectorXd ForwardDynamicsSolver::calculateRepulsionGradient()
 {
   Eigen::VectorXd tau_repulse = Eigen::VectorXd::Zero(m_number_joints);
   
   const double rho = 0.15;  // Influence zone (15cm)
-  const double eta = 0.01;  // Scaling gain
+  const double d_cap = 0.02; // cap at 2cm
+  const double eta = 250;  // tuning gain (stiffness)
   
   std::vector<int> joint_idx = {5, 6};
   std::vector<int> valid_seg_idx;
@@ -336,13 +366,20 @@ Eigen::VectorXd ForwardDynamicsSolver::calculateRepulsionGradient()
     // calculate distance to wall by projecting on normal 
     // d = (P_link - P_wall) . n
     double d = (p_segment - wall_point_).dot(wall_normal_);
-
+    // RCLCPP_INFO(nh_->get_logger(), "distance d: %f", d);
     // calculate repulsion if within influence zone
     if (d > 0 && d < rho)
     {
+      double effective_d = std::max(d, d_cap);
+  
       // calculate repulsive force
-      double force_mag = eta * (1.0/d - 1.0/rho) * (1.0 / (d * d));
-        
+      // M1: Artificial Potential Field (APF) derivative
+      // double force_mag = eta * (1.0/d - 1.0/rho) * (1.0 / (d * d));
+      // M2: Linear pushback
+      // double force_mag = eta * (rho - d); 
+      // M3: Quadratic pushback (slightly more aggressive than linear):
+      double force_mag = eta * std::pow(rho - effective_d, 2);        
+
       // force vector points along normal
       Eigen::Vector3d f_cartesian = force_mag * wall_normal_;
 
@@ -354,6 +391,25 @@ Eigen::VectorXd ForwardDynamicsSolver::calculateRepulsionGradient()
     }
   }
   return tau_repulse;
+}
+
+Eigen::VectorXd ForwardDynamicsSolver::calculatePosturalBias()
+{
+  Eigen::VectorXd tau_posture = Eigen::VectorXd::Zero(m_number_joints);
+  double target_slider = 0.7;
+  double target_joint_0 = -1.0310025243621384;
+  double target_joint_1 = -1.079621483313169; // 1.3197741; // joint # 2 
+  double target_joint_2 = -2.2760698537115203; // 1.6451501; // -2.4502983; // joint # 3  1.9221925081028903
+  //double target_joint_3 = 0.4009423; //-1.4048959; // joint # 4 0.4048958903577902
+  double k_p = 0.05;
+  double k_d = 0.005;
+  tau_posture(0) = 0.1 * (target_slider - m_current_positions(0)) - k_d * m_current_velocities(0);
+  tau_posture(1) = 0.07 * (target_joint_0 - m_current_positions(1)) - k_d * m_current_velocities(1);
+  //tau_posture(2) = k_p * (target_joint_1 - m_current_positions(2)) - k_d * m_current_velocities(2);
+  //tau_posture(3) = k_p * (target_joint_2 - m_current_positions(3)) - k_d * m_current_velocities(3);
+  //tau_posture(4) = k_p * (target_joint_3 - m_current_positions(4)) - k_d * m_current_velocities(4);
+
+  return tau_posture;
 }
 
 }  // namespace cartesian_controller_base
