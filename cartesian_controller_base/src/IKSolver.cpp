@@ -141,8 +141,8 @@ bool IKSolver::init(std::shared_ptr<rclcpp_lifecycle::LifecycleNode> nh, const K
   m_accel_limits = accel_limits;
 
   // Forward kinematics
-  m_fk_pos_solver = std::make_shared<KDL::ChainFkSolverPos_recursive(m_chain);
-  m_fk_vel_solver = std::make_shared<KDL::ChainFkSolverVel_recursive(m_chain);
+  m_fk_pos_solver = std::make_shared<KDL::ChainFkSolverPos_recursive>(m_chain);
+  m_fk_vel_solver = std::make_shared<KDL::ChainFkSolverVel_recursive>(m_chain);
   // m_fk_pos_solver.reset(new KDL::ChainFkSolverPos_recursive(m_chain));
   // m_fk_vel_solver.reset(new KDL::ChainFkSolverVel_recursive(m_chain));
 

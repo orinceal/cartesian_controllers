@@ -413,6 +413,7 @@ void CartesianControllerBase::computeJointControlCmds(const ctrl::Vector6D & err
   // PD controlled system input
   m_error_scale = get_node()->get_parameter("solver.error_scale").as_double();
   m_cartesian_input = m_error_scale * m_spatial_controller(error, period);
+  RCLCPP_INFO(get_node()->get_logger(), "base error cartesian: %f %f %f %f %f %f", m_cartesian_input(0), m_cartesian_input(1), m_cartesian_input(2), m_cartesian_input(3), m_cartesian_input(4), m_cartesian_input(5));
 
   // Simulate one step forward
   m_simulated_joint_motion = m_ik_solver->getJointControlCmds(period, m_cartesian_input);

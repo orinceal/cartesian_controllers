@@ -117,30 +117,74 @@ CartesianComplianceController::on_configure(const rclcpp_lifecycle::State & prev
                                                     << Base::m_end_effector_link);
     return TYPE::ERROR;
   }
+  // configure parameter maps defined in base frame
+  m_stiffness_param_map = {{"compliance.trans_x.c", 0}, {"compliance.trans_y.c", 1}, {"compliance.trans_z.c", 2},
+                           {"compliance.rot_x.c", 3}, {"compliance.rot_y.c", 4}, {"compliance.rot_z.c", 5}
+                          };
+  m_damping_param_map = {{"compliance.trans_x.k", 0}, {"compliance.trans_y.k", 1}, {"compliance.trans_z.k", 2},
+                           {"compliance.rot_x.k", 3}, {"compliance.rot_y.k", 4}, {"compliance.rot_z.k", 5}
+                          };
+  m_inertia_param_map = {{"compliance.trans_x.I", 0}, {"compliance.trans_y.I", 1}, {"compliance.trans_z.I", 2},
+                           {"compliance.rot_x.I", 3}, {"compliance.rot_y.I", 4}, {"compliance.rot_z.I", 5}
+                          };
+  // load params
+  for (auto const & [name, index] : m_stiffness_param_map) {
+    m_stiffness_diag[index] = get_node()->get_parameter(name).as_double();
+  }  
+  for (auto const & [name, index] : m_damping_param_map) {
+    m_damping_diag[index] = get_node()->get_parameter(name).as_double();
+  }
+  for (auto const & [name, index] : m_inertia_param_map) {
+    m_inertia_diag[index] = get_node()->get_parameter(name).as_double();
+  }
+  // calculateCriticalDamping();
 
-  m_stiffness_diag[0] = get_node()->get_parameter("compliance.trans_x.c").as_double();
-  m_stiffness_diag[1] = get_node()->get_parameter("compliance.trans_y.c").as_double();
-  m_stiffness_diag[2] = get_node()->get_parameter("compliance.trans_z.c").as_double();
-  m_stiffness_diag[3] = get_node()->get_parameter("compliance.rot_x.c").as_double();
-  m_stiffness_diag[4] = get_node()->get_parameter("compliance.rot_y.c").as_double();
-  m_stiffness_diag[5] = get_node()->get_parameter("compliance.rot_z.c").as_double();
+  // callback for live parameter changes
+  m_callback_handle = get_node()->add_on_set_parameters_callback(
+    [this](const std::vector<rclcpp::Parameter> & parameters) -> rcl_interfaces::msg::SetParametersResult {
+      rcl_interfaces::msg::SetParametersResult result;
+      result.successful = true;
+      result.reason = "success";
 
-  m_inertia_diag[0] = get_node()->get_parameter("compliance.trans_x.I").as_double();
-  m_inertia_diag[1] = get_node()->get_parameter("compliance.trans_y.I").as_double();
-  m_inertia_diag[2] = get_node()->get_parameter("compliance.trans_z.I").as_double();
-  m_inertia_diag[3] = get_node()->get_parameter("compliance.rot_x.I").as_double();
-  m_inertia_diag[4] = get_node()->get_parameter("compliance.rot_y.I").as_double();
-  m_inertia_diag[5] = get_node()->get_parameter("compliance.rot_z.I").as_double();
+      // bool update_params = false;
 
-  calculateCriticalDamping();
-  // convert to base frame
-  // Base::displayInBaseLink(m_stiffness, m_compliance_ref_link)
+      std::lock_guard<std::mutex> lock(m_param_mutex);
 
-  m_param_handler = std:make_shared<rclcpp::ParameterEventHandler>(get_node());
-  auto cb = [this](const rcl_interfaces::msg::ParameterEvent & event) {
-    // logic to update m_stiffness and m_inertia when parameters change
-  };
-  m_cb_handle = m_param_handler->add_parameter_event_callback(cb);
+      for (const auto & param : parameters) {
+        const std::string & name = param.get_name();
+        if (m_stiffness_param_map.count(name)) {
+          if (param.as_double() < 0.0) {
+            result.successful = false;
+            result.reason = "stiffness coefficients cannot be negative";
+            return result;
+          }
+          m_stiffness_diag[m_stiffness_param_map.at(name)] = param.as_double();
+          // update_params = true;
+        }
+        else if (m_damping_param_map.count(name)) {
+          if (param.as_double() < 0.0) {
+            result.successful = false;
+            result.reason = "damping coefficients cannot be negative";
+            return result;
+          }
+          m_damping_diag[m_damping_param_map.at(name)] = param.as_double();
+          // update_params = true;
+        }
+        else if (m_inertia_param_map.count(name)) {
+          if (param.as_double() < 0.0) {
+            result.successful = false;
+            result.reason = "inertia coefficients cannot be negative";
+            return result;
+          }
+          m_inertia_diag[m_inertia_param_map.at(name)] = param.as_double();
+          // update_params = true;
+        }
+      }
+      // if (update_params) {
+      //   this->calculateCriticalDamping();
+      // }
+      return result;
+  });
 
   // Make sure sensor wrenches are interpreted correctly
   ForceBase::setFtSensorReferenceFrame(m_compliance_ref_link);
@@ -212,8 +256,11 @@ controller_interface::return_type CartesianComplianceController::update(
 
 ctrl::Vector6D CartesianComplianceController::computeComplianceError(const KDL::Frame& target_frame, const rclcpp::Duration& period)
 {
+  std::lock_guard<std::mutex> lock(m_param_mutex);
   double dt = period.seconds();
   ctrl::Vector6D x_error = MotionBase::computeMotionError(target_frame);
+  // RCLCPP_INFO(get_node()->get_logger(), "motion error: %f %f %f %f %f %f", x_error(0), x_error(1), x_error(2), x_error(3), x_error(4), x_error(5));
+
   ctrl::Vector6D x_dot = Base::m_ik_solver->getEndEffectorVel();
   ctrl::Vector6D x_ddot = (x_dot - m_last_x_dot) / dt;
   
@@ -225,13 +272,15 @@ ctrl::Vector6D CartesianComplianceController::computeComplianceError(const KDL::
                  - (m_inertia_diag[i] * x_ddot[i]);
   }
 
-  ctrl::Vector6D net_force += ForceBase::computeForceError();
-
     // // Spring force in base orientation
     // Base::displayInBaseLink(m_stiffness, m_compliance_ref_link) * MotionBase::computeMotionError(target_frame)
 
     // // Sensor and target force in base orientation
     // + ForceBase::computeForceError();
+  // net_force += ForceBase::computeForceError();
+  ctrl::Vector6D force_error = ForceBase::computeForceError();
+  net_force += force_error;
+  // RCLCPP_INFO(get_node()->get_logger(), "force error: %f %f %f %f %f %f", force_error(0), force_error(1), force_error(2), force_error(3), force_error(4), force_error(5));
 
   m_last_x_dot = x_dot;
 
@@ -243,7 +292,7 @@ void CartesianComplianceController::calculateCriticalDamping(double zeta)
   for (int i = 0; i < 6; ++i)
   {
     // D = 2 * zeta * sqrt(M * K)
-    m_damping_diag[i] = 2.0 * zeta * std::sqrt(stiffness[i] * inertia[i]);
+    m_damping_diag[i] = 2.0 * zeta * std::sqrt(m_stiffness_diag[i] * m_inertia_diag[i]);
   }
 }
 

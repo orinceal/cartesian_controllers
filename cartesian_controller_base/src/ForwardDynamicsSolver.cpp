@@ -83,31 +83,7 @@ trajectory_msgs::msg::JointTrajectoryPoint ForwardDynamicsSolver::getJointContro
 
   // Compute joint jacobian
   // m_jnt_jacobian_solver->JntToJac(m_current_positions, m_jnt_jacobian);
-
-  // Eigen::VectorXd tau_gravity = Eigen::VectorXd::Zero(m_number_joints);
-  // double gravity = 9.81;
-  // Eigen::VectorXd joint_scales = Eigen::VectorXd::Constant(m_number_joints, m_gravity_factor);
-  // //joint_scales(0) = 1.0;
-
-  // for (size_t i = 0; i < m_chain.segments.size(); ++i)
-  // {
-  //   double virtual_mass = m_chain.segments[i].getInertia().getMass();
-  //   if (virtual_mass <= 1e-6) continue;
-
-  //   KDL::Jacobian J_link(m_number_joints);
-  //   m_jnt_jacobian_solver->JntToJac(m_current_positions, J_link, i+1);
   
-  //   ctrl::Vector6D wrench_support;
-  //   wrench_support << 0.0, 0.0, (virtual_mass * gravity), 0.0, 0.0, 0.0;
-
-  //   // accumulate torque, tau_gravity = J^T * Wrench
-  //   tau_gravity += J_link.data.transpose() * wrench_support;
-  // }
-  // Eigen::VectorXd tau_gravity_scaled = tau_gravity.cwiseProduct(joint_scales);
-  // evaluate null space forces
-  // if (m_ns_positions.rows() != m_current_positions.rows()) {
-  //   return 
-  // }
   // add additional damping from redundant manipulator F_ext
   // Eigen::VectorXd q_error = m_ns_positions.data - m_current_positions.data;
   // Eigen::VectorXd q_dot_error = -m_current_velocities.data; // assume q_dot_ns = 0
@@ -127,36 +103,38 @@ trajectory_msgs::msg::JointTrajectoryPoint ForwardDynamicsSolver::getJointContro
   Eigen::MatrixXd J_pinv_wdls = W_inv * J.transpose() * (JJT_weighted + damping).inverse();
 
   // calculate null space projector
-  //Eigen::MatrixXd J_pinv = m_jnt_jacobian.data.completeOrthogonalDecomposition().pseudoInverse();
   Eigen::MatrixXd I = Eigen::MatrixXd::Identity(m_number_joints, m_number_joints);
-  //Eigen::MatrixXd P = I - (J_pinv * m_jnt_jacobian.data);
   Eigen::MatrixXd P = I - (J_pinv_wdls * J);
-  // Eigen::VectorXd tau_ns = P * null_space_bias;
+
   Eigen::VectorXd tau_repulse = calculateRepulsionGradient();
-  Eigen::VectorXd tau_posture = calculatePosturalBias();
-  Eigen::VectorXd tau_nullsp = P * (tau_repulse + tau_posture);
+  // Eigen::VectorXd tau_posture = calculatePosturalBias();
+  Eigen::VectorXd tau_nullsp = P * (tau_repulse);
 
   // joint tip accelerations J^T f
   Eigen::VectorXd tau_tip_accel = m_jnt_jacobian.data.transpose() * net_force;
 
   // calculate damping data
   Eigen::VectorXd damping_coeffs = Eigen::VectorXd::Constant(m_number_joints, 0.002);
-  damping_coeffs(0) = 4.0;
+  damping_coeffs(0) = 1.0;
   Eigen::VectorXd tau_damping = damping_coeffs.cwiseProduct(m_last_velocities.data);
 
   // joint accelerations according to: \f$ \ddot{q} = H^{-1} ( J^T f + B \dot{q}) \f$
-  m_current_accelerations.data = m_jnt_space_inertia.data.inverse() * (tau_tip_accel + tau_damping); //+ tau_ns);
+  m_current_accelerations.data = m_jnt_space_inertia.data.inverse() * (tau_tip_accel + tau_damping + tau_nullsp); //+ tau_ns);
   //applyAccelLimits();
   // Numerical time integration with the Euler forward method
   m_current_velocities.data = m_last_velocities.data + m_current_accelerations.data * period.seconds();
-  m_current_velocities.data *= 0.9;  // 10 % global damping against unwanted null space motion.
+  //m_current_velocities.data *= 0.9;  // 10 % global damping against unwanted null space motion.
                                      // Will cause exponential slow-down without input.
 
-  applyVelLimits();
-  m_current_positions.data = m_last_positions.data + m_current_velocities.data * period.seconds();
-  // RCLCPP_INFO(nh_->get_logger(), "positions: %f %f %f %f %f %f %f", m_current_positions(0), m_current_positions(1), m_current_positions(2),
-  //             m_current_positions(3), m_current_positions(4), m_current_positions(5), m_current_positions(6));
+  // RCLCPP_INFO(nh_->get_logger(), "velocities: %f %f %f %f %f %f %f", m_current_velocities(0), m_current_velocities(1), m_current_velocities(2),
+  //             m_current_velocities(3), m_current_velocities(4), m_current_velocities(5), m_current_velocities(6));
 
+  applyVelLimits();
+
+  // RCLCPP_INFO(nh_->get_logger(), "velocities: %f %f %f %f %f %f %f", m_current_velocities(0), m_current_velocities(1), m_current_velocities(2),
+  //             m_current_velocities(3), m_current_velocities(4), m_current_velocities(5), m_current_velocities(6));
+
+  m_current_positions.data = m_last_positions.data + m_current_velocities.data * period.seconds();
   // Make sure positions stay in allowed margins
   applyJointLimits();
   // Apply results
@@ -227,11 +205,11 @@ bool ForwardDynamicsSolver::init(std::shared_ptr<rclcpp_lifecycle::LifecycleNode
   }
 
   // Forward dynamics
-  m_jnt_jacobian_solver = std::make_shared<KDL::ChainJntToJacSolver(m_chain);
-  m_jnt_space_inertia_solver = std::make_shared<KDL::ChainDynParam(m_chain, KDL::Vector::Zero());
+  m_jnt_jacobian_solver = std::make_shared<KDL::ChainJntToJacSolver>(m_chain);
+  m_jnt_space_inertia_solver = std::make_shared<KDL::ChainDynParam>(m_chain, KDL::Vector::Zero());
   // m_jnt_jacobian_solver.reset(new KDL::ChainJntToJacSolver(m_chain));
   // m_jnt_space_inertia_solver.reset(new KDL::ChainDynParam(m_chain, KDL::Vector::Zero()));
-  // m_jnt_space_gravity_solver.reset(new KDL::ChainDynParam(m_chain, KDL::Vector::Zero()));
+
   m_jnt_jacobian.resize(m_number_joints);
   m_jnt_space_inertia.resize(m_number_joints);
   // Set the initial value if provided at runtime, else use default value.
@@ -259,7 +237,7 @@ void ForwardDynamicsSolver::updateKinematics() {
   // Compute joint jacobian
   m_jnt_jacobian_solver->JntToJac(m_current_positions, m_jnt_jacobian);
 
-  IKSolver::updateKinemaitcs();
+  IKSolver::updateKinematics();
 }
 
 bool ForwardDynamicsSolver::buildGenericModel()
@@ -279,7 +257,7 @@ bool ForwardDynamicsSolver::buildGenericModel()
     else if (m_chain.segments[i].getJoint().getType() == KDL::Joint::TransAxis) {
       // set higher mass for slider joint
       m_chain.segments[i].setInertia(
-      KDL::RigidBodyInertia(1.0, KDL::Vector::Zero(), KDL::RotationalInertia(1.0, 1.0, 1.0)));
+      KDL::RigidBodyInertia(0.5, KDL::Vector::Zero(), KDL::RotationalInertia(0.5, 0.5, 0.5)));
       jnt_seg_idx.at(j) = i;
       j++;
     } 
@@ -301,7 +279,7 @@ bool ForwardDynamicsSolver::buildGenericModel()
   // Only give the last segment a generic mass and inertia.
   // See https://arxiv.org/pdf/1908.06252.pdf for a motivation for this setting.
   double m = 1;
-  double ip = 1;
+  double ip = 0.04;
   m_chain.segments[m_chain.segments.size() - 1].setInertia(
     KDL::RigidBodyInertia(m, KDL::Vector::Zero(), KDL::RotationalInertia(ip, ip, ip)));
   return true;

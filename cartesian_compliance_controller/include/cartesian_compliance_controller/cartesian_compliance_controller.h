@@ -46,6 +46,7 @@
 #include <cartesian_motion_controller/cartesian_motion_controller.h>
 
 #include <controller_interface/controller_interface.hpp>
+#include <rclcpp/node_interfaces/node_parameters_interface.hpp>
 
 namespace cartesian_compliance_controller
 {
@@ -103,9 +104,12 @@ private:
   void calculateCriticalDamping(double zeta = 1.0);
   
   // parameter callback 
-  std::shared_ptr<rclcpp::ParameterEventHandler> m_param_handler;
-  std::shared_ptr<rclcpp::ParameterCallbackHandler> m_cb_handle;
+  rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr m_callback_handle;
 
+  std::map<std::string, int> m_stiffness_param_map;
+  std::map<std::string, int> m_damping_param_map;
+  std::map<std::string, int> m_inertia_param_map;
+  std::mutex m_param_mutex; // for thread safety
   ctrl::Vector6D m_stiffness_diag;
   ctrl::Vector6D m_damping_diag;
   ctrl::Vector6D m_inertia_diag;
