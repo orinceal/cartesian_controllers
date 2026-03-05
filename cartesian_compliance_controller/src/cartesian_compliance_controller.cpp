@@ -280,7 +280,7 @@ ctrl::Vector6D CartesianComplianceController::computeComplianceError(const KDL::
   // net_force += ForceBase::computeForceError();
   ctrl::Vector6D force_error = ForceBase::computeForceError();
   net_force += force_error;
-  // RCLCPP_INFO(get_node()->get_logger(), "force error: %f %f %f %f %f %f", force_error(0), force_error(1), force_error(2), force_error(3), force_error(4), force_error(5));
+  //RCLCPP_INFO(get_node()->get_logger(), "force error: %f %f %f %f %f %f", force_error(0), force_error(1), force_error(2), force_error(3), force_error(4), force_error(5));
 
   m_last_x_dot = x_dot;
 
