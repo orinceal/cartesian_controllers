@@ -133,8 +133,7 @@ private:
 
   // Dynamic parameters
   const std::string m_params = "solver.forward_dynamics";  ///< namespace for parameter access
-  rclcpp_lifecycle::LifecycleNode::SharedPtr nh_;
-  rclcpp::Logger get_logger() const {return nh_->get_logger();}
+  rclcpp::Logger get_logger() const {return m_handle->get_logger();}
 
   double m_gravity_factor;
   // Nullspace configuration 

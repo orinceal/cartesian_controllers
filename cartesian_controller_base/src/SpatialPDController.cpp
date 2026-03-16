@@ -45,13 +45,13 @@ namespace cartesian_controller_base
 {
 SpatialPDController::SpatialPDController() {}
 
-ctrl::Vector6D SpatialPDController::operator()(const ctrl::Vector6D & error,
+ctrl::Vector6D SpatialPDController::operator()(const ctrl::Vector6D & error, const ctrl::Vector6D & current_state,
                                                const rclcpp::Duration & period)
 {
   // Perform pd control separately on each Cartesian dimension
   for (int i = 0; i < 6; ++i)  // 3 transition, 3 rotation
   {
-    m_cmd(i) = m_pd_controllers[i](error[i], period);
+    m_cmd(i) = m_pd_controllers[i](error[i], current_state[i], period);
   }
   return m_cmd;
 }

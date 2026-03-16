@@ -156,7 +156,7 @@ ctrl::Vector6D CartesianForceController::computeForceError()
   ctrl::Vector6D sensor_wrench = Base::displayInBaseLink(m_ft_sensor_wrench, m_new_ft_sensor_ref);
 
   // Superimpose target wrench and sensor wrench in base frame
-  RCLCPP_INFO(get_node()->get_logger(), "sensor_wrench transformed: %f %f %f %f %f %f", sensor_wrench(0), sensor_wrench(1), sensor_wrench(2), sensor_wrench(3), sensor_wrench(4), sensor_wrench(5));
+  // RCLCPP_INFO(get_node()->get_logger(), "sensor_wrench transformed: %f %f %f %f %f %f", sensor_wrench(0), sensor_wrench(1), sensor_wrench(2), sensor_wrench(3), sensor_wrench(4), sensor_wrench(5));
   // return Base::displayInBaseLink(m_ft_sensor_wrench, m_new_ft_sensor_ref) + target_wrench;
   return sensor_wrench + target_wrench;
 }
@@ -178,9 +178,9 @@ void CartesianForceController::setFtSensorReferenceFrame(const std::string & new
   Base::m_forward_kinematics_solver->JntToCart(jnts, new_sensor_ref, m_new_ft_sensor_ref);
 
   m_ft_sensor_transform = new_sensor_ref.Inverse() * sensor_ref;
-  double roll, pitch, yaw;
-  m_ft_sensor_transform.M.GetRPY(roll, pitch, yaw);
-  RCLCPP_INFO(get_node()->get_logger(), "m_ft_sensor_transform: Position: [%.4f %.4f %.4f] | RPY: [%.4f %.4f %.4f]", m_ft_sensor_transform.p.x(), m_ft_sensor_transform.p.y(), m_ft_sensor_transform.p.z(), roll, pitch, yaw);
+  // double roll, pitch, yaw;
+  // m_ft_sensor_transform.M.GetRPY(roll, pitch, yaw);
+  // RCLCPP_INFO(get_node()->get_logger(), "m_ft_sensor_transform: Position: [%.4f %.4f %.4f] | RPY: [%.4f %.4f %.4f]", m_ft_sensor_transform.p.x(), m_ft_sensor_transform.p.y(), m_ft_sensor_transform.p.z(), roll, pitch, yaw);
 }
 
 void CartesianForceController::targetWrenchCallback(

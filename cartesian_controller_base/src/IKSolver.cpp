@@ -95,7 +95,7 @@ void IKSolver::synchronizeJointPositions(
   const std::vector<std::reference_wrapper<hardware_interface::LoanedStateInterface> > &
     joint_pos_handles)
 {
-  const double alpha = 0.01;
+  const double alpha = 0.1;
   static bool first_sync = true;
 
   for (size_t i = 0; i < joint_pos_handles.size(); ++i)
@@ -185,6 +185,8 @@ void IKSolver::applyVelLimits()
   {
     m_current_velocities(i) = 
       std::clamp(m_current_velocities(i), -m_vel_limits(i), m_vel_limits(i));
+
+    // deadband to prevent integral drift
     if (std::abs(m_current_velocities(i)) < m_vel_deadband) {
       m_current_velocities(i) = 0.0;
     }
@@ -197,9 +199,9 @@ void IKSolver::applyAccelLimits()
   {
     m_current_accelerations(i) = 
       std::clamp(m_current_accelerations(i), -m_accel_limits(i), m_accel_limits(i));
-    if (std::abs(m_current_accelerations(i)) < m_accel_deadband) {
-      m_current_accelerations(i) = 0.0;
-    }
+    // if (std::abs(m_current_accelerations(i)) < m_accel_deadband) {
+    //   m_current_accelerations(i) = 0.0;
+    // }
   }
 }
 }  // namespace cartesian_controller_base

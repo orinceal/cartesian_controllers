@@ -114,25 +114,25 @@ trajectory_msgs::msg::JointTrajectoryPoint ForwardDynamicsSolver::getJointContro
   Eigen::VectorXd tau_tip_accel = m_jnt_jacobian.data.transpose() * net_force;
 
   // calculate damping data
-  Eigen::VectorXd damping_coeffs = Eigen::VectorXd::Constant(m_number_joints, 0.002);
-  damping_coeffs(0) = 1.0;
+  Eigen::VectorXd damping_coeffs = Eigen::VectorXd::Constant(m_number_joints, 0.005); // 0.0005
+  damping_coeffs(0) = 5.0;
   Eigen::VectorXd tau_damping = damping_coeffs.cwiseProduct(m_last_velocities.data);
 
   // joint accelerations according to: \f$ \ddot{q} = H^{-1} ( J^T f + B \dot{q}) \f$
-  m_current_accelerations.data = m_jnt_space_inertia.data.inverse() * (tau_tip_accel + tau_damping + tau_nullsp); //+ tau_ns);
-  //applyAccelLimits();
+  m_current_accelerations.data = m_jnt_space_inertia.data.inverse() * (tau_tip_accel - tau_damping); //+ tau_ns);
+  // applyAccelLimits();
   // Numerical time integration with the Euler forward method
   m_current_velocities.data = m_last_velocities.data + m_current_accelerations.data * period.seconds();
   //m_current_velocities.data *= 0.9;  // 10 % global damping against unwanted null space motion.
                                      // Will cause exponential slow-down without input.
 
-  // RCLCPP_INFO(nh_->get_logger(), "velocities: %f %f %f %f %f %f %f", m_current_velocities(0), m_current_velocities(1), m_current_velocities(2),
+  // RCLCPP_INFO(get_logger(), "velocities: %f %f %f %f %f %f %f", m_current_velocities(0), m_current_velocities(1), m_current_velocities(2),
   //             m_current_velocities(3), m_current_velocities(4), m_current_velocities(5), m_current_velocities(6));
-
+ 
   applyVelLimits();
 
-  // RCLCPP_INFO(nh_->get_logger(), "velocities: %f %f %f %f %f %f %f", m_current_velocities(0), m_current_velocities(1), m_current_velocities(2),
-  //             m_current_velocities(3), m_current_velocities(4), m_current_velocities(5), m_current_velocities(6));
+  RCLCPP_INFO(get_logger(), "velocities: %f %f %f %f %f %f %f", m_current_velocities(0), m_current_velocities(1), m_current_velocities(2),
+              m_current_velocities(3), m_current_velocities(4), m_current_velocities(5), m_current_velocities(6));
 
   m_current_positions.data = m_last_positions.data + m_current_velocities.data * period.seconds();
   // Make sure positions stay in allowed margins
@@ -152,7 +152,7 @@ trajectory_msgs::msg::JointTrajectoryPoint ForwardDynamicsSolver::getJointContro
 
   // Update for the next cycle
   m_last_positions = m_current_positions;
-  m_last_velocities = m_current_velocities; // assume last velocity as zero, instantaneous acceleration
+  m_last_velocities = m_current_velocities;
 
   return control_cmd;
 }
@@ -164,7 +164,6 @@ bool ForwardDynamicsSolver::init(std::shared_ptr<rclcpp_lifecycle::LifecycleNode
                                  const KDL::JntArray & accel_limits)
 {
   IKSolver::init(nh, chain, upper_pos_limits, lower_pos_limits, vel_limits, accel_limits);
-  nh_ = nh;
 
   // double total_real_mass = 0.0;
   // double total_virtual_mass = 0.0;
@@ -194,7 +193,7 @@ bool ForwardDynamicsSolver::init(std::shared_ptr<rclcpp_lifecycle::LifecycleNode
   //   m_gravity_factor = 1.0; 
   // }
 
-  // RCLCPP_INFO(nh_->get_logger(), 
+  // RCLCPP_INFO(get_logger(), 
   //             "Gravity Factor: %.2f (Real: %.2fkg, Virtual: %.2fkg)", 
   //             m_gravity_factor, total_real_mass, total_virtual_mass);
 
@@ -219,10 +218,14 @@ bool ForwardDynamicsSolver::init(std::shared_ptr<rclcpp_lifecycle::LifecycleNode
   // m_ns_jnt_sub = nh->create_subscription<sensor_msgs::msg::JointState>("/optimal_joints", 1,
   // std::bind(&ForwardDynamicsSolver::nsStateCallback, this, std::placeholders::_1));
 
+  wall_normal_.setZero();
+  wall_point_.setZero();
   // initialize wall origin subscriber
   auto qos = rclcpp::QoS(1).transient_local();
   m_wall_info_sub = nh->create_subscription<geometry_msgs::msg::Pose>("/wall_info", qos,
   std::bind(&ForwardDynamicsSolver::wallPtCallback, this, std::placeholders::_1));
+
+
 
   RCLCPP_INFO(nh->get_logger(), "Forward dynamics solver initialized");
   RCLCPP_INFO(nh->get_logger(), "Forward dynamics solver has control over %i joints",
@@ -243,7 +246,7 @@ void ForwardDynamicsSolver::updateKinematics() {
 bool ForwardDynamicsSolver::buildGenericModel()
 {
   // Set all masses and inertias to minimal (yet stable) values.
-  double ip_min = 0.001; //0.00001; //0.005; //0.002; //0.01;
+  double ip_min = 0.0001; //0.00001; //0.005; //0.002; //0.01;
 
   jnt_seg_idx.resize(m_number_joints);
   int j = 0;
@@ -257,7 +260,7 @@ bool ForwardDynamicsSolver::buildGenericModel()
     else if (m_chain.segments[i].getJoint().getType() == KDL::Joint::TransAxis) {
       // set higher mass for slider joint
       m_chain.segments[i].setInertia(
-      KDL::RigidBodyInertia(0.5, KDL::Vector::Zero(), KDL::RotationalInertia(0.5, 0.5, 0.5)));
+      KDL::RigidBodyInertia(1.0, KDL::Vector::Zero(), KDL::RotationalInertia(1.0, 1.0, 1.0)));
       jnt_seg_idx.at(j) = i;
       j++;
     } 
@@ -331,7 +334,7 @@ Eigen::VectorXd ForwardDynamicsSolver::calculateRepulsionGradient()
     if (idx >= 0 && idx < m_number_joints) {
       valid_seg_idx.push_back(jnt_seg_idx[idx]);
     } else {
-      RCLCPP_WARN(nh_->get_logger(), "joint index for repulsion calculation is out of bounds!");
+      RCLCPP_WARN(m_handle->get_logger(), "joint index for repulsion calculation is out of bounds!");
       return tau_repulse;
     }
   }
@@ -344,7 +347,7 @@ Eigen::VectorXd ForwardDynamicsSolver::calculateRepulsionGradient()
     // calculate distance to wall by projecting on normal 
     // d = (P_link - P_wall) . n
     double d = (p_segment - wall_point_).dot(wall_normal_);
-    // RCLCPP_INFO(nh_->get_logger(), "distance d: %f", d);
+    // RCLCPP_INFO(get_logger(), "distance d: %f", d);
     // calculate repulsion if within influence zone
     if (d > 0 && d < rho)
     {

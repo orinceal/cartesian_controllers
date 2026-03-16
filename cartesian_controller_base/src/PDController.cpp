@@ -43,7 +43,7 @@
 
 namespace cartesian_controller_base
 {
-PDController::PDController() : m_last_p_error(0.0) {}
+PDController::PDController() : m_last_state(0.0) {}
 
 PDController::~PDController() {}
 
@@ -66,7 +66,7 @@ void PDController::init(const std::string & params,
   auto_declare(m_params + ".d");
 }
 
-double PDController::operator()(const double & error, const rclcpp::Duration & period)
+double PDController::operator()(const double & error, const double & current_state, const rclcpp::Duration & period)
 {
   if (period == rclcpp::Duration::from_seconds(0.0))
   {
@@ -76,9 +76,11 @@ double PDController::operator()(const double & error, const rclcpp::Duration & p
   // Get latest gains
   m_handle->get_parameter(m_params + ".p", m_p);
   m_handle->get_parameter(m_params + ".d", m_d);
-  double result = m_p * error + m_d * (error - m_last_p_error) / period.seconds();
+  // double result = m_p * error + m_d * (error - m_last_p_error) / period.seconds();
+  // m_last_p_error = error;
 
-  m_last_p_error = error;
+  double result = (m_p * error) - (m_d * (current_state - m_last_state) / period.seconds());
+  m_last_state = current_state;
   return result;
 }
 

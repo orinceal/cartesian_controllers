@@ -262,27 +262,50 @@ ctrl::Vector6D CartesianComplianceController::computeComplianceError(const KDL::
   // RCLCPP_INFO(get_node()->get_logger(), "motion error: %f %f %f %f %f %f", x_error(0), x_error(1), x_error(2), x_error(3), x_error(4), x_error(5));
 
   ctrl::Vector6D x_dot = Base::m_ik_solver->getEndEffectorVel();
-  ctrl::Vector6D x_ddot = (x_dot - m_last_x_dot) / dt;
+  ctrl::Vector6D raw_x_ddot = (x_dot - m_last_x_dot) / dt;
   
+  double alpha_accel = 0.2; 
+  if (!m_x_ddot_initialized) {
+    m_filt_x_ddot = raw_x_ddot;
+    m_x_ddot_initialized = true;
+  } else {
+      m_filt_x_ddot = (1.0 - alpha_accel) * m_filt_x_ddot + alpha_accel * raw_x_ddot;
+  }
   ctrl::Vector6D net_force;
   for (int i=0; i < 6; ++i)
   {
     net_force[i] = (m_stiffness_diag[i] * x_error[i])
                  - (m_damping_diag[i] * x_dot[i])
-                 - (m_inertia_diag[i] * x_ddot[i]);
+                 - (m_inertia_diag[i] * m_filt_x_ddot[i]);
   }
-
+  // RCLCPP_INFO(get_node()->get_logger(), "spring force error: %f %f %f %f %f %f", net_force(0), net_force(1), net_force(2), net_force(3), net_force(4), net_force(5));
     // // Spring force in base orientation
     // Base::displayInBaseLink(m_stiffness, m_compliance_ref_link) * MotionBase::computeMotionError(target_frame)
 
     // // Sensor and target force in base orientation
     // + ForceBase::computeForceError();
   // net_force += ForceBase::computeForceError();
-  ctrl::Vector6D force_error = ForceBase::computeForceError();
-  net_force += force_error;
+  // ctrl::Vector6D force_error = ForceBase::computeForceError();
+  // net_force += force_error;
   //RCLCPP_INFO(get_node()->get_logger(), "force error: %f %f %f %f %f %f", force_error(0), force_error(1), force_error(2), force_error(3), force_error(4), force_error(5));
+  // RCLCPP_INFO(get_node()->get_logger(), "net force error: %f %f %f %f %f %f", net_force(0), net_force(1), net_force(2), net_force(3), net_force(4), net_force(5));
 
   m_last_x_dot = x_dot;
+
+  // apply force deadband
+  double f_threshold = 0.2; // N
+  double t_threshold = 0.01; // Nm
+  
+  for (int i = 0; i < 6; ++i) {
+    double limit = (i < 3) ? f_threshold : t_threshold;
+
+    if (std::abs(net_force[i]) < limit) {
+      net_force[i] = 0.0;
+    } else {
+      // deadband ramp
+      net_force[i] -= std::copysign(limit, net_force[i]);
+    }
+  }
 
   return net_force;
 }

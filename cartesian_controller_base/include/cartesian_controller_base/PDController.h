@@ -64,7 +64,7 @@ public:
 
   void init(const std::string & params, std::shared_ptr<rclcpp_lifecycle::LifecycleNode> handle);
 
-  double operator()(const double & error, const rclcpp::Duration & period);
+  double operator()(const double & error, const double & current_state, const rclcpp::Duration & period);
 
 private:
   std::shared_ptr<rclcpp_lifecycle::LifecycleNode> m_handle;
@@ -73,7 +73,8 @@ private:
   // Gain parameters
   double m_p;  ///< proportional gain
   double m_d;  ///< derivative gain
-  double m_last_p_error;
+  // double m_last_p_error;
+  double m_last_state;
 };
 
 }  // namespace cartesian_controller_base

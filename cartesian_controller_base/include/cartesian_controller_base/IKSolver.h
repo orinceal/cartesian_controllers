@@ -207,7 +207,7 @@ protected:
   KDL::JntArray m_lower_pos_limits;
   KDL::JntArray m_vel_limits;
   KDL::JntArray m_accel_limits;
-  double m_vel_deadband = 0.0004; // 0.0005;
+  double m_vel_deadband = 0.0002; // 0.0005;
   double m_accel_deadband = 0.003;
   
   // Forward kinematics

@@ -68,7 +68,7 @@ public:
      *
      * @return The controlled 6-dim vector (translational, rotational).
      */
-  ctrl::Vector6D operator()(const ctrl::Vector6D & error, const rclcpp::Duration & period);
+  ctrl::Vector6D operator()(const ctrl::Vector6D & error, const ctrl::Vector6D & current_state, const rclcpp::Duration & period);
 
 private:
   ctrl::Vector6D m_cmd;
