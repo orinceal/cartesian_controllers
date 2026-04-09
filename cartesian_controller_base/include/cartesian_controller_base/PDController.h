@@ -64,17 +64,17 @@ public:
 
   void init(const std::string & params, std::shared_ptr<rclcpp_lifecycle::LifecycleNode> handle);
 
-  double operator()(const double & error, const double & current_state, const rclcpp::Duration & period);
+  double operator()(const double & error, const double & current_vel);
 
 private:
+  OnSetParametersCallbackHandle::SharedPtr m_callback_handle;
+
   std::shared_ptr<rclcpp_lifecycle::LifecycleNode> m_handle;
   std::string m_params;  ///< namespace for parameter access
 
   // Gain parameters
-  double m_p;  ///< proportional gain
-  double m_d;  ///< derivative gain
-  // double m_last_p_error;
-  double m_last_state;
+  std::atomic<double> m_p;  ///< proportional gain
+  std::atomic<double> m_d;  ///< derivative gain
 };
 
 }  // namespace cartesian_controller_base

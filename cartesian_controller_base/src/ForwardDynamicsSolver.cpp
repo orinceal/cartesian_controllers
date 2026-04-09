@@ -84,12 +84,15 @@ trajectory_msgs::msg::JointTrajectoryPoint ForwardDynamicsSolver::getJointContro
   // Compute joint jacobian
   // m_jnt_jacobian_solver->JntToJac(m_current_positions, m_jnt_jacobian);
   
-  // add additional damping from redundant manipulator F_ext
+  // joint tip accelerations J^T f
+  Eigen::VectorXd tau_tip_accel = m_jnt_jacobian.data.transpose() * net_force;
+
+  // add additional joint forces to maintain "preferred" bias position
   // Eigen::VectorXd q_error = m_ns_positions.data - m_current_positions.data;
   // Eigen::VectorXd q_dot_error = -m_current_velocities.data; // assume q_dot_ns = 0
   // double kp_null = 1.0;
   // double kd_null = 0.2;
-  // Eigen::VectorXd null_space_bias = kp_null * q_error + kd_null * q_dot_error;
+  // Eigen::VectorXd tau_bias_ns = kp_null * q_error + kd_null * q_dot_error;
 
   Eigen::VectorXd weights = Eigen::VectorXd::Ones(m_number_joints);
   weights(0) = 3.0; // higher weight for slider 
@@ -107,32 +110,32 @@ trajectory_msgs::msg::JointTrajectoryPoint ForwardDynamicsSolver::getJointContro
   Eigen::MatrixXd P = I - (J_pinv_wdls * J);
 
   Eigen::VectorXd tau_repulse = calculateRepulsionGradient();
-  // Eigen::VectorXd tau_posture = calculatePosturalBias();
-  Eigen::VectorXd tau_nullsp = P * (tau_repulse);
+  // Eigen::VectorXd tau_bias_ns = calculatePosturalBias();
+  Eigen::VectorXd tau_repulse_ns = P * (tau_repulse);
 
-  // joint tip accelerations J^T f
-  Eigen::VectorXd tau_tip_accel = m_jnt_jacobian.data.transpose() * net_force;
-
-  // calculate damping data
-  Eigen::VectorXd damping_coeffs = Eigen::VectorXd::Constant(m_number_joints, 0.005); // 0.0005
-  damping_coeffs(0) = 5.0;
-  Eigen::VectorXd tau_damping = damping_coeffs.cwiseProduct(m_last_velocities.data);
+  // calculate damping data in joint space (tau_s = -k_vq * H(q) * q_dot (see eqns 64 and 65 in https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=1087068))
+  Eigen::VectorXd kvq_diag = Eigen::VectorXd::Constant(m_number_joints, 0.01);
+  // kvq_diag(0) = 5.0;
+  Eigen::MatrixXd K_vq = kvq_diag.asDiagonal();
+  Eigen::VecotrXd tau_s = -K_vq * m_jnt_space_inertia.data * m_last_velocities.data;
 
   // joint accelerations according to: \f$ \ddot{q} = H^{-1} ( J^T f + B \dot{q}) \f$
-  m_current_accelerations.data = m_jnt_space_inertia.data.inverse() * (tau_tip_accel - tau_damping); //+ tau_ns);
+  // use Cholesky decomposition (LDLT )instead of inverse to solve for q_ddot 
+  m_current_accelerations.data = m_jnt_space_inertia.data.ldlt().solve(tau_tip_accel + tau_s + tau_repulse_ns);
+  // m_current_accelerations.data = m_jnt_space_inertia.data.inverse() * (tau_tip_accel - tau_damping + tau_nullsp);
   // applyAccelLimits();
   // Numerical time integration with the Euler forward method
   m_current_velocities.data = m_last_velocities.data + m_current_accelerations.data * period.seconds();
-  //m_current_velocities.data *= 0.9;  // 10 % global damping against unwanted null space motion.
-                                     // Will cause exponential slow-down without input.
+  // m_current_velocities.data *= 0.9;  // 10 % global damping against unwanted null space motion.
+  //                                    // Will cause exponential slow-down without input.
 
   // RCLCPP_INFO(get_logger(), "velocities: %f %f %f %f %f %f %f", m_current_velocities(0), m_current_velocities(1), m_current_velocities(2),
   //             m_current_velocities(3), m_current_velocities(4), m_current_velocities(5), m_current_velocities(6));
  
   applyVelLimits();
 
-  RCLCPP_INFO(get_logger(), "velocities: %f %f %f %f %f %f %f", m_current_velocities(0), m_current_velocities(1), m_current_velocities(2),
-              m_current_velocities(3), m_current_velocities(4), m_current_velocities(5), m_current_velocities(6));
+  // RCLCPP_INFO(get_logger(), "velocities: %f %f %f %f %f %f %f", m_current_velocities(0), m_current_velocities(1), m_current_velocities(2),
+  //             m_current_velocities(3), m_current_velocities(4), m_current_velocities(5), m_current_velocities(6));
 
   m_current_positions.data = m_last_positions.data + m_current_velocities.data * period.seconds();
   // Make sure positions stay in allowed margins
@@ -184,7 +187,7 @@ bool ForwardDynamicsSolver::init(std::shared_ptr<rclcpp_lifecycle::LifecycleNode
   // }
   // // 3. Calculate the Balloon Factor
   // // Avoid division by zero
-  // if (total_virtual_mass > 0)
+  // if (total_virtual_mass > 0)f
   // {
   //   m_gravity_factor = total_real_mass / total_virtual_mass;
   // }

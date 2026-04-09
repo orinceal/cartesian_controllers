@@ -118,77 +118,94 @@ CartesianComplianceController::on_configure(const rclcpp_lifecycle::State & prev
     return TYPE::ERROR;
   }
   // configure parameter maps defined in base frame
-  m_stiffness_param_map = {{"compliance.trans_x.c", 0}, {"compliance.trans_y.c", 1}, {"compliance.trans_z.c", 2},
-                           {"compliance.rot_x.c", 3}, {"compliance.rot_y.c", 4}, {"compliance.rot_z.c", 5}
-                          };
-  m_damping_param_map = {{"compliance.trans_x.k", 0}, {"compliance.trans_y.k", 1}, {"compliance.trans_z.k", 2},
-                           {"compliance.rot_x.k", 3}, {"compliance.rot_y.k", 4}, {"compliance.rot_z.k", 5}
-                          };
-  m_inertia_param_map = {{"compliance.trans_x.I", 0}, {"compliance.trans_y.I", 1}, {"compliance.trans_z.I", 2},
-                           {"compliance.rot_x.I", 3}, {"compliance.rot_y.I", 4}, {"compliance.rot_z.I", 5}
-                          };
+  // m_stiffness_param_map = {{"compliance.trans_x.c", 0}, {"compliance.trans_y.c", 1}, {"compliance.trans_z.c", 2},
+  //                          {"compliance.rot_x.c", 3}, {"compliance.rot_y.c", 4}, {"compliance.rot_z.c", 5}
+  //                         };
+  // m_damping_param_map = {{"compliance.trans_x.k", 0}, {"compliance.trans_y.k", 1}, {"compliance.trans_z.k", 2},
+  //                          {"compliance.rot_x.k", 3}, {"compliance.rot_y.k", 4}, {"compliance.rot_z.k", 5}
+  //                         };
+  // m_inertia_param_map = {{"compliance.trans_x.I", 0}, {"compliance.trans_y.I", 1}, {"compliance.trans_z.I", 2},
+  //                          {"compliance.rot_x.I", 3}, {"compliance.rot_y.I", 4}, {"compliance.rot_z.I", 5}
+  //                         };
   // load params
-  for (auto const & [name, index] : m_stiffness_param_map) {
-    m_stiffness_diag[index] = get_node()->get_parameter(name).as_double();
-  }  
-  for (auto const & [name, index] : m_damping_param_map) {
-    m_damping_diag[index] = get_node()->get_parameter(name).as_double();
-  }
-  for (auto const & [name, index] : m_inertia_param_map) {
-    m_inertia_diag[index] = get_node()->get_parameter(name).as_double();
-  }
-  // calculateCriticalDamping();
+  // for (auto const & [name, index] : m_stiffness_param_map) {
+  //   m_stiffness_diag[index] = get_node()->get_parameter(name).as_double();
+  // }  
+  // for (auto const & [name, index] : m_damping_param_map) {
+  //   m_damping_diag[index] = get_node()->get_parameter(name).as_double();
+  // }
+  // for (auto const & [name, index] : m_inertia_param_map) {
+  //   m_inertia_diag[index] = get_node()->get_parameter(name).as_double();
+  // }
 
   // callback for live parameter changes
-  m_callback_handle = get_node()->add_on_set_parameters_callback(
-    [this](const std::vector<rclcpp::Parameter> & parameters) -> rcl_interfaces::msg::SetParametersResult {
-      rcl_interfaces::msg::SetParametersResult result;
-      result.successful = true;
-      result.reason = "success";
+  // m_callback_handle = get_node()->add_on_set_parameters_callback(
+  //   [this](const std::vector<rclcpp::Parameter> & parameters) -> rcl_interfaces::msg::SetParametersResult {
+  //     rcl_interfaces::msg::SetParametersResult result;
+  //     result.successful = true;
+  //     result.reason = "success";
 
-      // bool update_params = false;
+  //     // bool update_params = false;
 
-      std::lock_guard<std::mutex> lock(m_param_mutex);
+  //     std::lock_guard<std::mutex> lock(m_param_mutex);
 
-      for (const auto & param : parameters) {
-        const std::string & name = param.get_name();
-        if (m_stiffness_param_map.count(name)) {
-          if (param.as_double() < 0.0) {
-            result.successful = false;
-            result.reason = "stiffness coefficients cannot be negative";
-            return result;
-          }
-          m_stiffness_diag[m_stiffness_param_map.at(name)] = param.as_double();
-          // update_params = true;
-        }
-        else if (m_damping_param_map.count(name)) {
-          if (param.as_double() < 0.0) {
-            result.successful = false;
-            result.reason = "damping coefficients cannot be negative";
-            return result;
-          }
-          m_damping_diag[m_damping_param_map.at(name)] = param.as_double();
-          // update_params = true;
-        }
-        else if (m_inertia_param_map.count(name)) {
-          if (param.as_double() < 0.0) {
-            result.successful = false;
-            result.reason = "inertia coefficients cannot be negative";
-            return result;
-          }
-          m_inertia_diag[m_inertia_param_map.at(name)] = param.as_double();
-          // update_params = true;
-        }
-      }
-      // if (update_params) {
-      //   this->calculateCriticalDamping();
-      // }
-      return result;
-  });
+  //     for (const auto & param : parameters) {
+  //       const std::string & name = param.get_name();
+  //       if (m_stiffness_param_map.count(name)) {
+  //         if (param.as_double() < 0.0) {
+  //           result.successful = false;
+  //           result.reason = "stiffness coefficients cannot be negative";
+  //           return result;
+  //         }
+  //         m_stiffness_diag[m_stiffness_param_map.at(name)] = param.as_double();
+  //         // update_params = true;
+  //       }
+  //       else if (m_damping_param_map.count(name)) {
+  //         if (param.as_double() < 0.0) {
+  //           result.successful = false;
+  //           result.reason = "damping coefficients cannot be negative";
+  //           return result;
+  //         }
+  //         m_damping_diag[m_damping_param_map.at(name)] = param.as_double();
+  //         // update_params = true;
+  //       }
+  //       else if (m_inertia_param_map.count(name)) {
+  //         if (param.as_double() < 0.0) {
+  //           result.successful = false;
+  //           result.reason = "inertia coefficients cannot be negative";
+  //           return result;
+  //         }
+  //         m_inertia_diag[m_inertia_param_map.at(name)] = param.as_double();
+  //         // update_params = true;
+  //       }
+  //     }
+  //     return result;
+  // });
 
   // Make sure sensor wrenches are interpreted correctly
   ForceBase::setFtSensorReferenceFrame(m_compliance_ref_link);
 
+
+  #if HAS_ROS2_CONTROL_INTROSPECTION
+    if (m_enable_introspection) {
+      RCLCPP_INFO(get_node()->get_logger(), "Enabling ROS2 Control Introspection for debugging.");
+      this->enable_introspection(true);
+      for (int i = 0; i < 6; ++i) {
+        REGISTER_ROS2_CONTROL_INTROSPECTION("cartesian_target_" + std::to_string(i), &m_cartesian_target[i]);
+        REGISTER_ROS2_CONTROL_INTROSPECTION("cartesian_pose_" + std::to_string(i), &m_cartesian_pose[i]);
+        REGISTER_ROS2_CONTROL_INTROSPECTION("target_wrench_" + std::to_string(i), &m_target_wrench_base[i]);
+        REGISTER_ROS2_CONTROL_INTROSPECTION("sensor_wrench_" + std::to_string(i), &m_sensor_wrench_base[i]);        
+        REGISTER_ROS2_CONTROL_INTROSPECTION("motion_error_" + std::to_string(i), &m_motion_error[i]);
+        REGISTER_ROS2_CONTROL_INTROSPECTION("wrench_error_" + std::to_string(i), &m_wrench_error[i]);
+      }
+      for (size_t i = 0; i < m_simulated_joint_motion.positions.size(); ++i){
+        REGISTER_ROS2_CONTROL_INTROSPECTION("joint_pos_cmd_" + std::to_string(i), &m_simulated_joint_motion.positions[i]);
+      }
+    } else {
+      RCLCPP_INFO(get_node()->get_logger(), "ROS2 Control Introspection is disabled.");
+    }
+  #endif
+  
   return TYPE::SUCCESS;
 }
 
@@ -237,12 +254,14 @@ controller_interface::return_type CartesianComplianceController::update(
   {
     // The internal 'simulation time' is deliberately independent of the outer
     // control cycle.
-    auto internal_period = rclcpp::Duration::from_seconds(0.02);
+    auto internal_period = rclcpp::Duration::from_seconds(0.008);
 
     Base::m_ik_solver->updateKinematics();
 
     // Compute the net force
     ctrl::Vector6D error = computeComplianceError(active_target, internal_period);
+
+    // add F_rs to total error for robot with nullspace
 
     // Turn Cartesian error into joint motion
     Base::computeJointControlCmds(error, internal_period);
@@ -258,39 +277,22 @@ ctrl::Vector6D CartesianComplianceController::computeComplianceError(const KDL::
 {
   std::lock_guard<std::mutex> lock(m_param_mutex);
   double dt = period.seconds();
-  ctrl::Vector6D x_error = MotionBase::computeMotionError(target_frame);
+  ctrl::Vector6D net_force;
+
+  ctrl::Vector6D motion_error = MotionBase::computeMotionError(target_frame);
   // RCLCPP_INFO(get_node()->get_logger(), "motion error: %f %f %f %f %f %f", x_error(0), x_error(1), x_error(2), x_error(3), x_error(4), x_error(5));
 
-  ctrl::Vector6D x_dot = Base::m_ik_solver->getEndEffectorVel();
-  ctrl::Vector6D raw_x_ddot = (x_dot - m_last_x_dot) / dt;
-  
-  double alpha_accel = 0.2; 
-  if (!m_x_ddot_initialized) {
-    m_filt_x_ddot = raw_x_ddot;
-    m_x_ddot_initialized = true;
-  } else {
-      m_filt_x_ddot = (1.0 - alpha_accel) * m_filt_x_ddot + alpha_accel * raw_x_ddot;
-  }
-  ctrl::Vector6D net_force;
-  for (int i=0; i < 6; ++i)
-  {
-    net_force[i] = (m_stiffness_diag[i] * x_error[i])
-                 - (m_damping_diag[i] * x_dot[i])
-                 - (m_inertia_diag[i] * m_filt_x_ddot[i]);
-  }
   // RCLCPP_INFO(get_node()->get_logger(), "spring force error: %f %f %f %f %f %f", net_force(0), net_force(1), net_force(2), net_force(3), net_force(4), net_force(5));
     // // Spring force in base orientation
     // Base::displayInBaseLink(m_stiffness, m_compliance_ref_link) * MotionBase::computeMotionError(target_frame)
 
     // // Sensor and target force in base orientation
     // + ForceBase::computeForceError();
-  // net_force += ForceBase::computeForceError();
+  net_force += ForceBase::computeForceError();
   // ctrl::Vector6D force_error = ForceBase::computeForceError();
   // net_force += force_error;
   //RCLCPP_INFO(get_node()->get_logger(), "force error: %f %f %f %f %f %f", force_error(0), force_error(1), force_error(2), force_error(3), force_error(4), force_error(5));
   // RCLCPP_INFO(get_node()->get_logger(), "net force error: %f %f %f %f %f %f", net_force(0), net_force(1), net_force(2), net_force(3), net_force(4), net_force(5));
-
-  m_last_x_dot = x_dot;
 
   // apply force deadband
   double f_threshold = 0.2; // N

@@ -97,6 +97,7 @@ CartesianControllerBase::on_init()
     auto_declare<std::string>("end_effector_link", "");
     auto_declare<std::vector<std::string>>("joints", std::vector<std::string>());
     auto_declare<std::vector<std::string>>("command_interfaces", std::vector<std::string>());
+    auto_declare<bool>("enable_introspection", false);
     auto_declare<double>("solver.error_scale", 1.0);
     auto_declare<int>("solver.iterations", 1);
     auto_declare<bool>("solver.publish_state_feedback", false);
@@ -239,8 +240,9 @@ CartesianControllerBase::on_configure(const rclcpp_lifecycle::State & previous_s
   m_iterations = get_node()->get_parameter("solver.iterations").as_int();
   m_error_scale = get_node()->get_parameter("solver.error_scale").as_double();
 
-  // Initialize Cartesian pd controllers
-  m_spatial_controller.init(get_node());
+  // Initialize gains k_vq for nullspace dissipation forces for redundant manipulator
+  // F_rs = k_vq * x_dot according to (Khatib 1987) https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=1087068
+  m_spatial_controller.init(get_node(), m_redundant_ns_key);
 
   // Check command interfaces.
   // We support position, velocity, or both.
@@ -259,6 +261,10 @@ CartesianControllerBase::on_configure(const rclcpp_lifecycle::State & previous_s
       return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::ERROR;
     }
   }
+
+  // Set ROS 2 params
+  m_publish_state_fb = get_node()->get_parameter("solver.publish_state_feedback").as_bool()
+  m_enable_introspection = get_node()->get_parameter("enable_introspection").as_bool();
 
   // Controller-internal state publishing
   m_feedback_pose_publisher =
@@ -361,7 +367,7 @@ CartesianControllerBase::on_shutdown(const rclcpp_lifecycle::State & previous_st
 
 void CartesianControllerBase::writeJointControlCmds()
 {
-  if (get_node()->get_parameter("solver.publish_state_feedback").as_bool())
+  if (m_publish_state_fb)
   {
     publishStateFeedback();
   }
@@ -406,14 +412,24 @@ void CartesianControllerBase::writeJointControlCmds()
     }
   }
 }
+ctrl::Vector6D CartesianControllerBase::applyPDGains(const std::string & key,
+                                                     const ctrl::Vector6D & error)
+{
+  // PD controlled system input with x_dot damping
+  ctrl::Vector6D x_dot = m_ik_solver->getEndEffectorVel();
+  ctrl::Vector6D command = m_spatial_controller(key, error, x_dot);
+  return command;
+}
 
-void CartesianControllerBase::computeJointControlCmds(const ctrl::Vector6D & error,
+void CartesianControllerBase::computeJointControlCmds(const ctrl::Vector6D & command,
                                                       const rclcpp::Duration & period)
 {
-  // PD controlled system input
-  m_error_scale = get_node()->get_parameter("solver.error_scale").as_double();
+  // Add F_rs for nullspace dissipation with P gain. No additional damping in this term!
   ctrl::Vector6D x_dot = m_ik_solver->getEndEffectorVel();
-  m_cartesian_input = m_error_scale * m_spatial_controller(error, x_dot, period);
+  command += m_spatial_controller(m_redundant_ns_key, x_dot);
+  // apply error scale
+  // m_error_scale = get_node()->get_parameter("solver.error_scale").as_double();
+  m_cartesian_input = m_error_scale * command;
 
   // Simulate one step forward
   m_simulated_joint_motion = m_ik_solver->getJointControlCmds(period, m_cartesian_input);
@@ -492,6 +508,19 @@ ctrl::Vector6D CartesianControllerBase::displayInTipLink(const ctrl::Vector6D & 
   }
 
   return out;
+}
+
+void CartesianControllerBase::updateIntrospectionVector(const KDL::Frame & frame, ctrl::Vector6D & target_vector);
+{
+  target_vector(0) = frame.p.x();
+  target_vector(1) = frame.p.y();
+  target_vector(2) = frame.p.z();
+
+  double r, p, y;
+  frame.M.GetRPY(r, p, y);
+  target_vector(3) = r;
+  target_vector(4) = p;
+  target_vector(5) = y;
 }
 
 void CartesianControllerBase::publishStateFeedback()

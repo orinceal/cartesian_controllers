@@ -72,6 +72,9 @@ CartesianMotionController::on_configure(const rclcpp_lifecycle::State & previous
     return ret;
   }
 
+  // Initialize Cartesian pd controllers
+  m_spatial_controller.init(get_node(), m_gain_key);
+  RCLCPP_INFO(get_node()->get_logger(), "m_gain_key: %c", m_gain_key.c_str());
   m_target_frame_subscr = get_node()->create_subscription<geometry_msgs::msg::PoseStamped>(
     get_node()->get_name() + std::string("/target_frame"), 3,
     std::bind(&CartesianMotionController::targetFrameCallback, this, std::placeholders::_1));
@@ -89,7 +92,13 @@ CartesianMotionController::on_activate(const rclcpp_lifecycle::State & previous_
 
   // Start where we are
   m_target_frame = m_current_frame;
-  return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::SUCCESS;
+
+  // update variables for ROS 2 Introspection
+  if (m_enable_introspection) {
+    Base::updateIntrospectionVector(m_current_frame, m_cartesian_pose);
+    Base::updateIntrospectionVector(m_target_frame, m_cartesian_target);
+  }
+    return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::SUCCESS;
 }
 
 rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn
@@ -122,10 +131,12 @@ controller_interface::return_type CartesianMotionController::update(const rclcpp
     auto internal_period = rclcpp::Duration::from_seconds(0.02);
     Base::m_ik_solver->updateKinematics();
     // Compute the motion error = target - current.
-    ctrl::Vector6D error = computeMotionError(active_target);
-    // RCLCPP_INFO(get_node()->get_logger(), "iteration: %u, error: %f %f %f %f %f %f", i, error(0), error(1), error(2), error(3), error(4), error(5));
-    // Turn Cartesian error into joint motion
-    Base::computeJointControlCmds(error, internal_period);
+//    ctrl::Vector6D error = computeMotionError(active_target);
+    computeMotionError(active_target);
+    // apply PD gains: F_motion = K_p * (x_d - x) + D_p * (x_dot_d - x_dot)
+    ctrl::Vector6D command = Base::applyPDGains(m_gain_key, m_motion_error);
+    // Turn Cartesian error into joint motion    
+    Base::computeJointControlCmds(command, internal_period);
   }
 
   // Write final commands to the hardware interface
@@ -138,9 +149,10 @@ ctrl::Vector6D CartesianMotionController::computeMotionError(const KDL::Frame& t
 {
   // Compute motion error wrt robot_base_link
   m_current_frame = Base::m_ik_solver->getEndEffectorPose();
-
+  if (m_enable_introspection) {
+    Base::updateIntrospectionVector(m_current_frame, m_cartesian_pose);
+  }
   // Transformation from target -> current corresponds to error = target - current
-  // KDL::Frame error_kdl;
   KDL::Vector pos_err = target_frame.p - m_current_frame.p;
   KDL::Rotation rot_err = target_frame.M * m_current_frame.M.Inverse();
 
@@ -163,30 +175,31 @@ ctrl::Vector6D CartesianMotionController::computeMotionError(const KDL::Frame& t
   // wrench.
   const double max_distance = 0.1;
   const double max_angle = 0.1;
-  ctrl::Vector6D error;
+
+  // ctrl::Vector6D raw_x_ddot = (x_dot - m_last_x_dot) / dt;
 
   // apply deadband to each linear axis
   for (int i = 0; i < 3; ++i){
     double d = std::abs(pos_err(i));
     if (d < dist_deadband) {
-      error(i) = 0.0;
+      m_motion_error(i) = 0.0;
     } else {
       // double s = std::clamp((d - dist_deadband) / dist_width, 0.0, 1.0);
-      error(i) = std::clamp(pos_err(i), -max_distance, max_distance);
+      m_motion_error(i) = std::clamp(pos_err(i), -max_distance, max_distance);
     }
   }
 
   // apply deadband to rotation
   if (std::abs(angle) < rot_deadband) {
-    error(3) = error(4) = error(5) = 0.0;
+    m_motion_error(3) = m_motion_error(4) = m_motion_error(5) = 0.0;
   } else {
     // double s_rot  = std::clamp((angle - rot_deadband) / rot_width, 0.0, 1.0);
     //KDL::Vector scaled_rot = rot_axis * (angle * s_rot);
     angle = std::clamp(angle, -max_angle, max_angle);
     rot_axis = rot_axis * angle;
-    error(3) = rot_axis(0);
-    error(4) = rot_axis(1);
-    error(5) = rot_axis(2);
+    m_motion_error(3) = rot_axis(0);
+    m_motion_error(4) = rot_axis(1);
+    m_motion_error(5) = rot_axis(2);
   }
 
   // // Scale errors to allowed magnitudes
@@ -194,14 +207,22 @@ ctrl::Vector6D CartesianMotionController::computeMotionError(const KDL::Frame& t
   // error_kdl.p = error_kdl.p * distance;
 
   // Reassign values
-  // error(0) = error_kdl.p.x();
-  // error(1) = error_kdl.p.y();
-  // error(2) = error_kdl.p.z();
-  // error(3) = rot_axis(0);
-  // error(4) = rot_axis(1);
-  // error(5) = rot_axis(2);
-  
-  return error;
+  // m_motion_error(0) = error_kdl.p.x();
+  // m_motion_error(1) = error_kdl.p.y();
+  // m_motion_error(2) = error_kdl.p.z();
+  // m_motion_error(3) = rot_axis(0);
+  // m_motion_error(4) = rot_axis(1);
+  // m_motion_error(5) = rot_axis(2);
+
+  // double alpha_accel = 0.2; 
+  // if (!m_x_ddot_initialized) {
+  //   m_filt_x_ddot = raw_x_ddot;
+  //   m_x_ddot_initialized = true;
+  // } else {
+  //     m_filt_x_ddot = (1.0 - alpha_accel) * m_filt_x_ddot + alpha_accel * raw_x_ddot;
+  // }
+
+  return m_motion_error;
 }
 
 void CartesianMotionController::targetFrameCallback(
@@ -231,11 +252,17 @@ void CartesianMotionController::targetFrameCallback(
                          Base::m_robot_base_link.c_str(), target->header.frame_id.c_str());
     return;
   }
-  std::lock_guard<std::mutex> lock(m_target_mutex);
-  m_target_frame = KDL::Frame(
-    KDL::Rotation::Quaternion(target->pose.orientation.x, target->pose.orientation.y,
-                              target->pose.orientation.z, target->pose.orientation.w),
-    KDL::Vector(target->pose.position.x, target->pose.position.y, target->pose.position.z));
+
+  {
+    std::lock_guard<std::mutex> lock(m_target_mutex);
+    m_target_frame = KDL::Frame(
+      KDL::Rotation::Quaternion(target->pose.orientation.x, target->pose.orientation.y,
+                                target->pose.orientation.z, target->pose.orientation.w),
+      KDL::Vector(target->pose.position.x, target->pose.position.y, target->pose.position.z));
+    if (m_enable_introspection) {
+      Base::updateIntrospectionVector(m_target_frame, m_cartesian_target);
+    }
+  }
 }
 
 }  // namespace cartesian_motion_controller

@@ -107,10 +107,13 @@ protected:
   ctrl::Vector6D computeMotionError(const KDL::Frame& target_frame);
   KDL::Frame m_target_frame;
   KDL::Frame m_current_frame;
+  ctrl::Vector6D m_target_pose;
+  ctrl::Vector6D m_cartesian_pose; // for ROS 2 Introspection
+  ctrl::Vector6D m_motion_error;
   std::mutex m_target_mutex;
-
+  std::string m_gain_key = "motion";
   void targetFrameCallback(const geometry_msgs::msg::PoseStamped::SharedPtr target);
-
+  
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr m_target_frame_subscr;
 };
 

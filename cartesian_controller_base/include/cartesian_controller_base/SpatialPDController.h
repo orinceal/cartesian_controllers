@@ -58,21 +58,24 @@ class SpatialPDController
 public:
   SpatialPDController();
 
-  bool init(std::shared_ptr<rclcpp_lifecycle::LifecycleNode> params);
+  bool init(std::shared_ptr<rclcpp_lifecycle::LifecycleNode> handle, const std::string & key);
 
   /**
      * @brief Call operator for one control cycle
      *
      * @param error The control error to reduce. Target - current.
      * @param period The period for this control step.
+     * @param current_vel task-space velocity x_dot to apply damping to
      *
      * @return The controlled 6-dim vector (translational, rotational).
      */
-  ctrl::Vector6D operator()(const ctrl::Vector6D & error, const ctrl::Vector6D & current_state, const rclcpp::Duration & period);
+  ctrl::Vector6D operator()(const std::string & key, const ctrl::Vector6D & error);
+  ctrl::Vector6D operator()(const std::string & key, const ctrl::Vector6D & error, const ctrl::Vector6D & current_vel);
 
 private:
   ctrl::Vector6D m_cmd;
-  std::vector<PDController> m_pd_controllers;
+  std::map<std::string, std::vector<PDController>> m_pd_map;
+  // std::vector<PDController> m_pd_controllers;
 };
 
 }  // namespace cartesian_controller_base

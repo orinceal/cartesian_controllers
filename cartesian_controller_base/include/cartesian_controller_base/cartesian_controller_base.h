@@ -111,14 +111,24 @@ protected:
   void writeJointControlCmds();
 
   /**
+     * @brief Apply PD gains to errors and add x_dot damping
+     *
+     * Velocity damping applies for both motion and force control. Check \ref SpatialPDController for details.
+     *
+     * @param error The error to minimize and apply gains to
+     * @param key string parameter to access pd gain parameter map in SpatialPDController, current options: "force_gain", "motion_gain"
+     */  
+  ctrl::Vector6D applyPDGains(const std::string & key, const ctrl::Vector6D & error)
+
+  /**
      * @brief Compute one control step using forward dynamics simulation
      *
      * Check \ref ForwardDynamicsSolver for details.
      *
-     * @param error The error to minimize
+     * @param command The error to minimize
      * @param period The period for this control cycle
      */
-  void computeJointControlCmds(const ctrl::Vector6D & error, const rclcpp::Duration & period);
+  void computeJointControlCmds(const ctrl::Vector6D & command, const rclcpp::Duration & period);
 
   /**
      * @brief Display the given vector in the given robot base link
@@ -177,6 +187,11 @@ protected:
    * @return True if the controller is active, false otherwise
    */
   bool isActive() const { return m_active; };
+
+  /**
+   * @brief Helper method to convert KDL Frame to Eigen::Matrix<double, 6, 1> for ROS2 introspection 
+   */
+  void updateIntrospectionVector(const KDL::Frame & frame, ctrl::Vector6D & target_vector);
 
   KDL::Chain m_robot_chain;
 
@@ -251,6 +266,11 @@ private:
   bool m_has_vel_limits;
   bool m_has_accel_limits;
   std::string m_robot_description;
+  std::string m_redundant_ns_key = "redundant_ns";
+  
+  // ROS 2 params
+  bool m_publish_state_fb;
+  bool m_enable_introspection;
 };
 
 }  // namespace cartesian_controller_base

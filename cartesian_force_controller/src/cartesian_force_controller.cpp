@@ -75,6 +75,9 @@ CartesianForceController::on_configure(const rclcpp_lifecycle::State & previous_
     return ret;
   }
 
+  // Initialize Cartesian pd controllers
+  m_spatial_controller.init(get_node(), m_gain_key);
+  RCLCPP_INFO(get_node()->get_logger(), "m_gain_key: %c", m_gain_key.c_str());
   // Make sure sensor link is part of the robot chain
   m_ft_sensor_ref_link = get_node()->get_parameter("ft_sensor_ref_link").as_string();
   if (!Base::robotChainContains(m_ft_sensor_ref_link))
@@ -130,10 +133,11 @@ controller_interface::return_type CartesianForceController::update(const rclcpp:
   auto internal_period = rclcpp::Duration::from_seconds(0.02);
   Base::m_ik_solver->updateKinematics();
   // Compute the net force
-  ctrl::Vector6D error = computeForceError();
-
+  computeForceError();
+  // apply PD gains: F_force = K_p * (f_d - f) - D_f * x_dot
+  ctrl::Vector6D command = Base::applyPDGains(m_gain_key, m_wrench_error);
   // Turn Cartesian error into joint motion
-  Base::computeJointControlCmds(error, internal_period);
+  Base::computeJointControlCmds(command, internal_period);
   // Write final commands to the hardware interface
   Base::writeJointControlCmds();
 
@@ -142,23 +146,28 @@ controller_interface::return_type CartesianForceController::update(const rclcpp:
 
 ctrl::Vector6D CartesianForceController::computeForceError()
 {
-  ctrl::Vector6D target_wrench;
   m_hand_frame_control = get_node()->get_parameter("hand_frame_control").as_bool();
 
   if (m_hand_frame_control)  // Assume end-effector frame by convention
   {
-    target_wrench = Base::displayInBaseLink(m_target_wrench, Base::m_end_effector_link);
+    m_target_wrench_base = Base::displayInBaseLink(m_target_wrench, Base::m_end_effector_link);
   }
   else  // Default to robot base frame
   {
-    target_wrench = m_target_wrench;
+    m_target_wrench_base = m_target_wrench;
   }
-  ctrl::Vector6D sensor_wrench = Base::displayInBaseLink(m_ft_sensor_wrench, m_new_ft_sensor_ref);
+  ctrl::Vector6D current_wrench;
+  {
+    std::lock_guard<std::mutex> lock(m_wrench_mutex);
+    current_wrench = m_ft_sensor_wrench;
+  }
+  m_sensor_wrench_base = Base::displayInBaseLink(current_wrench, m_new_ft_sensor_ref);
 
   // Superimpose target wrench and sensor wrench in base frame
+  m_wrench_error = m_sensor_wrench_base + m_target_wrench_base;
   // RCLCPP_INFO(get_node()->get_logger(), "sensor_wrench transformed: %f %f %f %f %f %f", sensor_wrench(0), sensor_wrench(1), sensor_wrench(2), sensor_wrench(3), sensor_wrench(4), sensor_wrench(5));
   // return Base::displayInBaseLink(m_ft_sensor_wrench, m_new_ft_sensor_ref) + target_wrench;
-  return sensor_wrench + target_wrench;
+  return m_wrench_error;
 }
 
 void CartesianForceController::setFtSensorReferenceFrame(const std::string & new_ref)
@@ -238,17 +247,47 @@ void CartesianForceController::ftSensorWrenchCallback(
   // Compute how the measured wrench appears in the frame of interest.
   tmp = m_ft_sensor_transform * tmp;
 
-  m_ft_sensor_wrench[0] = tmp[0];
-  m_ft_sensor_wrench[1] = tmp[1];
-  m_ft_sensor_wrench[2] = tmp[2];
-  m_ft_sensor_wrench[3] = tmp[3];
-  m_ft_sensor_wrench[4] = tmp[4];
-  m_ft_sensor_wrench[5] = tmp[5];
+  // TODO: m_gravity_compensated_wrench = transformed_wrench - tool_gravity_wrench; // subtract weight of tool after transformation not before. but apply tare before transformation!
+  {
+    std::lock_guard<std::mutex> lock(m_wrench_mutex);
+    m_ft_sensor_wrench[0] = tmp[0];
+    m_ft_sensor_wrench[1] = tmp[1];
+    m_ft_sensor_wrench[2] = tmp[2];
+    m_ft_sensor_wrench[3] = tmp[3];
+    m_ft_sensor_wrench[4] = tmp[4];
+    m_ft_sensor_wrench[5] = tmp[5];
+  }
   // RCLCPP_INFO(get_node()->get_logger(), "sensor_wrench: %f %f %f %f %f %f", m_ft_sensor_wrench(0), m_ft_sensor_wrench(1), m_ft_sensor_wrench(2), m_ft_sensor_wrench(3), m_ft_sensor_wrench(4), m_ft_sensor_wrench(5));
 
 }
 
 }  // namespace cartesian_force_controller
+
+// TODO: Gravity compensation placeholder for now
+// void CartesianForceController::compensateGravity(const KDL::Wrench& raw_sensor_wrench)
+// {
+      // double m_tool_mass = 0.85; // kg (e.g., your gripper + sensor adapter)
+      // KDL::Vector m_tool_com_offset(0.0, 0.0, 0.05); // m (distance from sensor to tool CoM)
+      // KDL::Wrench m_gravity_compensated_wrench;
+
+//     // 1. Get current orientation from Base FK solver (EE relative to Base)
+//     KDL::Frame current_ee_pose;
+//     KDL::JntArray jnts(Base::m_ik_solver->getPositions());
+//     Base::m_forward_kinematics_solver->JntToCart(jnts, current_ee_pose);
+
+//     // 2. Define Gravity vector in the Base Frame (pointing down)
+//     KDL::Vector gravity_base(0.0, 0.0, -9.81);
+
+//     // 3. Rotate the gravity vector into the End Effector frame
+//     // This tells the controller which way "down" is from the robot's perspective
+//     KDL::Vector gravity_ee = current_ee_pose.M.Inverse() * gravity_base;
+
+//     // 4. Calculate the static Force and Torque exerted by the tool mass
+//     KDL::Vector static_force = gravity_ee * m_tool_mass;
+//     KDL::Vector static_torque = m_tool_com_offset * static_force; // Cross product (r x F)
+//     KDL::Wrench tool_gravity_wrench(static_force, static_torque);
+
+// }
 
 // Pluginlib
 #include <pluginlib/class_list_macros.hpp>

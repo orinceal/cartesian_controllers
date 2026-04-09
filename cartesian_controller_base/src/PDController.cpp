@@ -43,7 +43,7 @@
 
 namespace cartesian_controller_base
 {
-PDController::PDController() : m_last_state(0.0) {}
+PDController::PDController() {}
 
 PDController::~PDController() {}
 
@@ -62,26 +62,33 @@ void PDController::init(const std::string & params,
     return m_handle->get_parameter(s).as_double();
   };
 
-  auto_declare(m_params + ".p");
-  auto_declare(m_params + ".d");
+  m_p = auto_declare(m_params + ".p");
+  m_d = auto_declare(m_params + ".d");
+
+  // parameter modification callback
+  m_callback_handle = m_handle->add_on_set_parameters_callback(
+    [this](const std::vector<rclcpp::Parameter> & parameters) {
+      for (const auto & param : parameters) {
+        if (param.get_name() == m_params + ".p") m_p = param.as_double();
+        if (param.get_name() == m_params + ".d") m_d = param.as_double();
+      }
+      rcl_interfaces::msg::SetParametersResult result;
+      result.successful = true;
+      return result;
+    }
+  );
 }
 
-double PDController::operator()(const double & error, const double & current_state, const rclcpp::Duration & period)
+double PDController::operator()(const double & error, const double & current_vel)
 {
-  if (period == rclcpp::Duration::from_seconds(0.0))
-  {
-    return 0.0;
-  }
-
-  // Get latest gains
-  m_handle->get_parameter(m_params + ".p", m_p);
-  m_handle->get_parameter(m_params + ".d", m_d);
+  // // Get latest gains
+  // m_handle->get_parameter(m_params + ".p", m_p);
+  // m_handle->get_parameter(m_params + ".d", m_d);
   // double result = m_p * error + m_d * (error - m_last_p_error) / period.seconds();
   // m_last_p_error = error;
 
-  double result = (m_p * error) - (m_d * (current_state - m_last_state) / period.seconds());
-  m_last_state = current_state;
-  return result;
+  // apply p_gain on error and d_gain on actual velocity from forward kinematics
+  return result = (m_p * error) - (m_d * current_vel);
 }
 
 }  // namespace cartesian_controller_base

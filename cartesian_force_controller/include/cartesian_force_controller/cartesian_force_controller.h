@@ -112,7 +112,12 @@ private:
   ctrl::Vector6D m_ft_sensor_wrench;
   std::string m_ft_sensor_ref_link;
   KDL::Frame m_ft_sensor_transform;
-
+  std::string m_gain_key = "force";
+  std::mutex m_wrench_mutex;
+  // for ROS 2 Introspection
+  ctrl::Vector6D m_target_wrench_base;
+  ctrl::Vector6D m_sensor_wrench_base;
+  ctrl::Vector6D m_wrench_error;
   /**
      * Allow users to choose whether to specify their target wrenches in the
      * end-effector frame (= True) or the base frame (= False). The first one
