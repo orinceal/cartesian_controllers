@@ -135,7 +135,7 @@ public:
      */
   void synchronizeJointPositions(
     const std::vector<std::reference_wrapper<hardware_interface::LoanedStateInterface> > &
-      joint_pos_handles);
+      joint_pos_handles, const rclcpp::Duration & period);
 
   /**
      * @brief Initialize the solver
@@ -159,6 +159,11 @@ public:
      * kinematics.
      */
   virtual void updateKinematics();
+
+  /**
+   * @brief Sets the nullspace damping gain to add joint space damping for redundant robots. Applies only to ForwardDynamicsSolver  
+   */
+  virtual void setNsDampingGain(double /*k_vq_ns*/) {} // Default implementation does nothing  
 
 protected:
   /**

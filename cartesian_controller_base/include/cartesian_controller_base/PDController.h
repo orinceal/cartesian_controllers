@@ -43,6 +43,7 @@
 #include "ROS2VersionConfig.h"
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_lifecycle/lifecycle_node.hpp"
+#include <rclcpp/node_interfaces/node_parameters_interface.hpp>
 
 namespace cartesian_controller_base
 {
@@ -62,14 +63,15 @@ public:
   PDController();
   ~PDController();
 
-  void init(const std::string & params, std::shared_ptr<rclcpp_lifecycle::LifecycleNode> handle);
+  void init(const std::string & params, rclcpp_lifecycle::LifecycleNode* handle);
 
   double operator()(const double & error, const double & current_vel);
 
 private:
-  OnSetParametersCallbackHandle::SharedPtr m_callback_handle;
+  // std::shared_ptr<rclcpp_lifecycle::LifecycleNode> m_handle;
+  rclcpp_lifecycle::LifecycleNode::WeakPtr m_handle;
+  rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr m_callback_handle;
 
-  std::shared_ptr<rclcpp_lifecycle::LifecycleNode> m_handle;
   std::string m_params;  ///< namespace for parameter access
 
   // Gain parameters

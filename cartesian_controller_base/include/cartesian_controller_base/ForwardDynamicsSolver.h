@@ -107,10 +107,10 @@ public:
      */
 
   bool init(std::shared_ptr<rclcpp_lifecycle::LifecycleNode> nh, const KDL::Chain & chain,
-            const KDL::JntArray & upper_pos_limits,
-            const KDL::JntArray & lower_pos_limits,
+            const KDL::JntArray & upper_pos_limits, const KDL::JntArray & lower_pos_limits,
             const KDL::JntArray & vel_limits, const KDL::JntArray & accel_limits) override;
   void updateKinematics() override;
+  void setNsDampingGain(double k_vq_ns) override; //{m_k_vq_ns = k_vq_ns;};
 private:
   //! Build a generic robot model for control
   bool buildGenericModel();
@@ -143,6 +143,8 @@ private:
   Eigen::Vector3d wall_point_;
   bool has_wall_point_{false};
   std::vector<int> jnt_seg_idx;
+  double m_k_vq_ns;
+
   /**
      * Virtual link mass
      * Virtual mass of the manipulator's links. The smaller this value, the

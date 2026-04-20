@@ -100,23 +100,23 @@ private:
      *
      * @return The remaining error wrench, given in robot base frame
      */
-  ctrl::Vector6D computeComplianceError(const KDL::Frame & target_frame, const rclcpp::Duration& period);
-  void calculateCriticalDamping(double zeta = 1.0);
+  ctrl::Vector6D computeComplianceError(const KDL::Frame & active_target);
+  // void calculateCriticalDamping(double zeta = 1.0);
   
   // parameter callback 
-  rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr m_callback_handle;
+  // rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr m_callback_handle;
 
-  std::map<std::string, int> m_stiffness_param_map;
-  std::map<std::string, int> m_damping_param_map;
-  std::map<std::string, int> m_inertia_param_map;
+  // std::map<std::string, int> m_stiffness_param_map;
+  // std::map<std::string, int> m_damping_param_map;
+  // std::map<std::string, int> m_inertia_param_map;
   std::mutex m_param_mutex; // for thread safety
   bool m_x_ddot_initialized{false};
   ctrl::Vector6D m_stiffness_diag;
-  ctrl::Vector6D m_damping_diag;
-  ctrl::Vector6D m_inertia_diag;
-  std::string m_compliance_ref_link;
-  ctrl::Vector6D m_last_x_dot;
-  ctrl::Vector6D m_filt_x_ddot;
+  // ctrl::Vector6D m_damping_diag;
+  // ctrl::Vector6D m_inertia_diag;
+  // std::string m_compliance_ref_link;
+  // ctrl::Vector6D m_last_x_dot;
+  // ctrl::Vector6D m_filt_x_ddot;
 };
 
 }  // namespace cartesian_compliance_controller

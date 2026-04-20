@@ -39,7 +39,7 @@
 
 #ifndef SPATIAL_PD_CONTROLLER_H_INCLUDED
 #define SPATIAL_PD_CONTROLLER_H_INCLUDED
-
+#include <memory>
 #include <cartesian_controller_base/PDController.h>
 #include <cartesian_controller_base/Utility.h>
 
@@ -58,7 +58,7 @@ class SpatialPDController
 public:
   SpatialPDController();
 
-  bool init(std::shared_ptr<rclcpp_lifecycle::LifecycleNode> handle, const std::string & key);
+  bool init(rclcpp_lifecycle::LifecycleNode* handle, const std::string & key);
 
   /**
      * @brief Call operator for one control cycle
@@ -74,7 +74,7 @@ public:
 
 private:
   ctrl::Vector6D m_cmd;
-  std::map<std::string, std::vector<PDController>> m_pd_map;
+  std::map<std::string, std::vector<std::unique_ptr<PDController>>> m_pd_map;
   // std::vector<PDController> m_pd_controllers;
 };
 

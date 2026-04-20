@@ -72,12 +72,36 @@ CartesianMotionController::on_configure(const rclcpp_lifecycle::State & previous
     return ret;
   }
 
+  // get node pointer (lock the weak ptr)
+  auto node_ptr = get_node();
+  if (!node_ptr) {
+    RCLCPP_ERROR(get_node()->get_logger(), "Unable to lock node ptr in Motion Controller on_configure");
+    return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::ERROR;
+  }
+
   // Initialize Cartesian pd controllers
-  m_spatial_controller.init(get_node(), m_gain_key);
-  RCLCPP_INFO(get_node()->get_logger(), "m_gain_key: %c", m_gain_key.c_str());
-  m_target_frame_subscr = get_node()->create_subscription<geometry_msgs::msg::PoseStamped>(
-    get_node()->get_name() + std::string("/target_frame"), 3,
-    std::bind(&CartesianMotionController::targetFrameCallback, this, std::placeholders::_1));
+  m_spatial_controller.init(node_ptr.get(), m_gain_key);
+
+  // Create subscription
+  // m_target_frame_subscriber = get_node()->create_subscription<geometry_msgs::msg::PoseStamped>(
+  //   get_node()->get_name() + std::string("/target_frame"), 3,
+  //   std::bind(&CartesianMotionController::targetFrameCallback, this, std::placeholders::_1));
+  m_target_frame_subscriber = node_ptr->create_subscription<geometry_msgs::msg::PoseStamped>(
+    node_ptr->get_name() + std::string("/target_frame"), 3,
+    std::bind(&CartesianMotionController::targetFrameCallback, this, std::placeholders::_1)
+  );
+  // Initialize realtime buffer
+  m_target_frame_buffer.initRT(KDL::Frame());
+
+  // Controller-internal state publishing
+  m_pos_error_publisher = 
+    std::make_shared<realtime_tools::RealtimePublisher<geometry_msgs::msg::Vector3Stamped>>(
+      node_ptr->create_publisher<geometry_msgs::msg::Vector3Stamped>(
+        std::string(node_ptr->get_name()) + "/pos_error", 3));
+  m_rot_error_publisher = 
+    std::make_shared<realtime_tools::RealtimePublisher<geometry_msgs::msg::Vector3Stamped>>(
+      node_ptr->create_publisher<geometry_msgs::msg::Vector3Stamped>(
+        std::string(node_ptr->get_name()) + "/rot_error", 3));        
 
   return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::SUCCESS;
 }
@@ -88,37 +112,32 @@ CartesianMotionController::on_activate(const rclcpp_lifecycle::State & previous_
   Base::on_activate(previous_state);
 
   // Reset simulation with real joint state
-  m_current_frame = Base::m_ik_solver->getEndEffectorPose();
+  // m_current_frame = Base::m_ik_solver->getEndEffectorPose();
 
   // Start where we are
-  m_target_frame = m_current_frame;
+  // m_target_frame = m_current_frame;
+  // reset buffer to where we are 
+  m_target_frame_buffer.initRT(Base::m_ik_solver->getEndEffectorPose());
 
-  // update variables for ROS 2 Introspection
-  if (m_enable_introspection) {
-    Base::updateIntrospectionVector(m_current_frame, m_cartesian_pose);
-    Base::updateIntrospectionVector(m_target_frame, m_cartesian_target);
-  }
-    return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::SUCCESS;
+  return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::SUCCESS;
 }
 
 rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn
 CartesianMotionController::on_deactivate(const rclcpp_lifecycle::State & previous_state)
 {
   Base::on_deactivate(previous_state);
+  m_target_frame_subscriber.reset();
   return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::SUCCESS;
 }
 
 controller_interface::return_type CartesianMotionController::update(const rclcpp::Time & time,
                                                                     const rclcpp::Duration & period)
 {
-  KDL::Frame active_target;
-  // get current target
-  {
-    std::lock_guard<std::mutex> lock(m_target_mutex);
-    active_target = m_target_frame;
-  }
+  // KDL::Frame active_target;
+  const auto active_target = *m_target_frame_buffer.readFromRT();
+
   // Synchronize the internal model and the real robot
-  Base::m_ik_solver->synchronizeJointPositions(Base::m_joint_state_pos_handles);
+  Base::m_ik_solver->synchronizeJointPositions(Base::m_joint_state_pos_handles, period);
 
   // Forward Dynamics turns the search for the according joint motion into a
   // control process. So, we control the internal model until we meet the
@@ -128,10 +147,9 @@ controller_interface::return_type CartesianMotionController::update(const rclcpp
   {
     // The internal 'simulation time' is deliberately independent of the outer
     // control cycle.
-    auto internal_period = rclcpp::Duration::from_seconds(0.02);
-    Base::m_ik_solver->updateKinematics();
+    auto internal_period = rclcpp::Duration::from_seconds(0.005);
     // Compute the motion error = target - current.
-//    ctrl::Vector6D error = computeMotionError(active_target);
+    // ctrl::Vector6D error = computeMotionError(active_target);
     computeMotionError(active_target);
     // apply PD gains: F_motion = K_p * (x_d - x) + D_p * (x_dot_d - x_dot)
     ctrl::Vector6D command = Base::applyPDGains(m_gain_key, m_motion_error);
@@ -148,19 +166,20 @@ controller_interface::return_type CartesianMotionController::update(const rclcpp
 ctrl::Vector6D CartesianMotionController::computeMotionError(const KDL::Frame& target_frame)
 {
   // Compute motion error wrt robot_base_link
-  m_current_frame = Base::m_ik_solver->getEndEffectorPose();
-  if (m_enable_introspection) {
-    Base::updateIntrospectionVector(m_current_frame, m_cartesian_pose);
-  }
+  const auto current_frame = Base::m_ik_solver->getEndEffectorPose();
   // Transformation from target -> current corresponds to error = target - current
-  KDL::Vector pos_err = target_frame.p - m_current_frame.p;
-  KDL::Rotation rot_err = target_frame.M * m_current_frame.M.Inverse();
+  KDL::Vector pos_err = target_frame.p - current_frame.p;
+  KDL::Rotation rot_err = target_frame.M * current_frame.M.Inverse();
 
   // Use Rodrigues Vector for a compact representation of orientation errors
   // Only for angles within [0,Pi)
   KDL::Vector rot_axis = KDL::Vector::Zero();
   double angle = rot_err.GetRotAngle(rot_axis);  // rot_axis is normalized
   //double distance = error_kdl.p.Normalize();
+
+  // store raw errors for publishing before deadband/clamping
+  m_pos_error_raw = pos_err;
+  m_rot_error_raw = rot_err;
 
   // deadband parameters
   const double dist_deadband = 0.002;      // 2mm (absolute zero)
@@ -225,8 +244,7 @@ ctrl::Vector6D CartesianMotionController::computeMotionError(const KDL::Frame& t
   return m_motion_error;
 }
 
-void CartesianMotionController::targetFrameCallback(
-  const geometry_msgs::msg::PoseStamped::SharedPtr target)
+void CartesianMotionController::targetFrameCallback(const geometry_msgs::msg::PoseStamped::SharedPtr target)
 {
   if (!this->isActive())
   {
@@ -253,18 +271,77 @@ void CartesianMotionController::targetFrameCallback(
     return;
   }
 
-  {
-    std::lock_guard<std::mutex> lock(m_target_mutex);
-    m_target_frame = KDL::Frame(
-      KDL::Rotation::Quaternion(target->pose.orientation.x, target->pose.orientation.y,
+  KDL::Frame target_raw(
+    KDL::Rotation::Quaternion(target->pose.orientation.x, target->pose.orientation.y,
                                 target->pose.orientation.z, target->pose.orientation.w),
-      KDL::Vector(target->pose.position.x, target->pose.position.y, target->pose.position.z));
-    if (m_enable_introspection) {
-      Base::updateIntrospectionVector(m_target_frame, m_cartesian_target);
-    }
-  }
+    KDL::Vector(target->pose.position.x, target->pose.position.y, target->pose.position.z));
+  
+  KDL::Frame smooth_target = filterTarget(target_raw);
+  m_target_frame_buffer.writeFromNonRT(smooth_target); // non-blocking write    
+  // assign to member variable
+  // {
+  //   std::lock_guard<std::mutex> lock(m_target_mutex);
+  //   //m_target_frame = target_raw;
+  //   m_target_frame = smooth_target;
+  // }
 }
 
+KDL::Frame CartesianMotionController::filterTarget(const KDL::Frame & target_raw) {
+  if (first_target_) {
+    filtered_target_frame_ = target_raw;
+    first_target_ = false;
+    return filtered_target_frame_;
+  }
+
+  // filtered_target_frame_ = target_raw;
+  // return filtered_target_frame_;
+
+  double alpha = 0.1;
+  // apply linear interpolation to position
+  filtered_target_frame_.p = (1.0 - alpha) * filtered_target_frame_.p + alpha * target_raw.p;
+
+  // apply SLERP to quarternions 
+  KDL::Vector rot_diff = KDL::diff(filtered_target_frame_.M, target_raw.M); // rotation vector from A to B
+  double angle = rot_diff.Norm();
+
+  if (angle > 1e-6) { // only rotate if there is a meaningful difference
+    KDL::Vector axis = rot_diff / angle;
+    KDL::Rotation rot_inc = KDL::Rotation::Rot2(axis, angle * alpha);
+    filtered_target_frame_.M = filtered_target_frame_.M * rot_inc;
+
+    // renormalize to prevent S0(3) drift (apply over 100 runs)
+    // double x, y, z, w;
+    // filtered_target_frame_.M.GetQuaternion(x, y, z, w);
+    // double norm = std::sqrt(x*x + y*y + z*z + w*w);
+    // x /= norm; y /= norm; z /= norm; w /= norm;
+    // filtered_target_frame_.M = KDL::Rotation::Quaternion(x, y, z, w);
+  }
+  return filtered_target_frame_;
+}
+
+void CartesianMotionController::publishMotionError(const rclcpp::Time& time) {
+    if (m_pos_error_publisher && m_pos_error_publisher->trylock()){
+      auto& msg = m_pos_error_publisher->msg_;
+      msg.header.stamp = time;
+      msg.header.frame_id = Base::m_robot_base_link;
+      msg.vector.x  = m_pos_error_raw(0);
+      msg.vector.y  = m_pos_error_raw(1);
+      msg.vector.z  = m_pos_error_raw(2);
+      m_pos_error_publisher->unlockAndPublish();
+    } 
+    if (m_rot_error_publisher && m_rot_error_publisher->trylock()){
+      double roll, pitch, yaw;
+      m_rot_error_raw.GetRPY(roll, pitch, yaw);
+
+      auto& msg = m_rot_error_publisher->msg_;
+      msg.header.stamp = time;
+      msg.header.frame_id = Base::m_robot_base_link;
+      msg.vector.x = roll;
+      msg.vector.y = pitch;
+      msg.vector.z = yaw;
+      m_rot_error_publisher->unlockAndPublish();
+    }
+  }
 }  // namespace cartesian_motion_controller
 
 // Pluginlib

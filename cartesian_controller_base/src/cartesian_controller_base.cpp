@@ -97,12 +97,13 @@ CartesianControllerBase::on_init()
     auto_declare<std::string>("end_effector_link", "");
     auto_declare<std::vector<std::string>>("joints", std::vector<std::string>());
     auto_declare<std::vector<std::string>>("command_interfaces", std::vector<std::string>());
-    auto_declare<bool>("enable_introspection", false);
+    auto_declare<bool>("solver.enable_introspection", false);
     auto_declare<double>("solver.error_scale", 1.0);
     auto_declare<int>("solver.iterations", 1);
     auto_declare<bool>("solver.publish_state_feedback", false);
     auto_declare<bool>("solver.velocity_limits_on", false);
     auto_declare<bool>("solver.acceleration_limits_on", false);
+    auto_declare<double>("redundant_ns.trans_x.p", 0.0);
     auto_declare<double>("robot_description_planning.default_velocity_scaling_factor", 1.0);    
     auto_declare<double>("robot_description_planning.default_acceleration_scaling_factor", 1.0);
     m_initialized = true;
@@ -233,16 +234,20 @@ CartesianControllerBase::on_configure(const rclcpp_lifecycle::State & previous_s
   }
 
   // Initialize solvers
-  m_ik_solver->init(get_node(), m_robot_chain, upper_pos_limits, lower_pos_limits, vel_limits, accel_limits);
+  m_ik_solver->init(get_node()->shared_from_this(), m_robot_chain, upper_pos_limits, lower_pos_limits, vel_limits, accel_limits);
+  
   KDL::Tree tmp("not_relevant");
   tmp.addChain(m_robot_chain, "not_relevant");
   m_forward_kinematics_solver.reset(new KDL::TreeFkSolverPos_recursive(tmp));
   m_iterations = get_node()->get_parameter("solver.iterations").as_int();
   m_error_scale = get_node()->get_parameter("solver.error_scale").as_double();
+  double k_vq_ns = get_node()->get_parameter("redundant_ns.trans_x.p").as_double();
+  RCLCPP_INFO(get_node()->get_logger(), "k_vq_ns: %f", k_vq_ns);
+  m_ik_solver->setNsDampingGain(k_vq_ns); // applies only to ForwardDynamicsSolver
 
   // Initialize gains k_vq for nullspace dissipation forces for redundant manipulator
   // F_rs = k_vq * x_dot according to (Khatib 1987) https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=1087068
-  m_spatial_controller.init(get_node(), m_redundant_ns_key);
+  m_spatial_controller.init(get_node().get(), m_redundant_ns_key);
 
   // Check command interfaces.
   // We support position, velocity, or both.
@@ -263,8 +268,8 @@ CartesianControllerBase::on_configure(const rclcpp_lifecycle::State & previous_s
   }
 
   // Set ROS 2 params
-  m_publish_state_fb = get_node()->get_parameter("solver.publish_state_feedback").as_bool()
-  m_enable_introspection = get_node()->get_parameter("enable_introspection").as_bool();
+  m_publish_state_fb = get_node()->get_parameter("solver.publish_state_feedback").as_bool();
+  m_enable_introspection = get_node()->get_parameter("solver.enable_introspection").as_bool();
 
   // Controller-internal state publishing
   m_feedback_pose_publisher =
@@ -424,17 +429,18 @@ ctrl::Vector6D CartesianControllerBase::applyPDGains(const std::string & key,
 void CartesianControllerBase::computeJointControlCmds(const ctrl::Vector6D & command,
                                                       const rclcpp::Duration & period)
 {
+  ctrl::Vector6D final_command = command;
   // Add F_rs for nullspace dissipation with P gain. No additional damping in this term!
   ctrl::Vector6D x_dot = m_ik_solver->getEndEffectorVel();
-  command += m_spatial_controller(m_redundant_ns_key, x_dot);
+  final_command += m_spatial_controller(m_redundant_ns_key, x_dot);
   // apply error scale
   // m_error_scale = get_node()->get_parameter("solver.error_scale").as_double();
-  m_cartesian_input = m_error_scale * command;
+  m_cartesian_input = m_error_scale * final_command;
 
   // Simulate one step forward
   m_simulated_joint_motion = m_ik_solver->getJointControlCmds(period, m_cartesian_input);
 
-  // m_ik_solver->updateKinematics(); // change to update before computing errors in loop
+  m_ik_solver->updateKinematics(); // change to update before computing errors in loop
 }
 
 ctrl::Vector6D CartesianControllerBase::displayInBaseLink(const ctrl::Vector6D & vector,
@@ -446,7 +452,7 @@ ctrl::Vector6D CartesianControllerBase::displayInBaseLink(const ctrl::Vector6D &
   {
     wrench_kdl(i) = vector[i];
   }
-
+  
   KDL::Frame transform_kdl;
   m_forward_kinematics_solver->JntToCart(m_ik_solver->getPositions(), transform_kdl, from);
 
@@ -484,6 +490,16 @@ ctrl::Matrix6D CartesianControllerBase::displayInBaseLink(const ctrl::Matrix6D &
   return tmp;
 }
 
+KDL::Wrench CartesianControllerBase::displayInBaseLink(const KDL::Wrench & wrench,
+                                                          const std::string & from)
+{
+  KDL::Frame transform_kdl;
+  m_forward_kinematics_solver->JntToCart(m_ik_solver->getPositions(), transform_kdl, from);
+
+  // Rotate into new reference frame
+  return transform_kdl.M * wrench;
+}
+
 ctrl::Vector6D CartesianControllerBase::displayInTipLink(const ctrl::Vector6D & vector,
                                                          const std::string & to)
 {
@@ -510,7 +526,7 @@ ctrl::Vector6D CartesianControllerBase::displayInTipLink(const ctrl::Vector6D & 
   return out;
 }
 
-void CartesianControllerBase::updateIntrospectionVector(const KDL::Frame & frame, ctrl::Vector6D & target_vector);
+void CartesianControllerBase::updateIntrospectionVector(const KDL::Frame & frame, ctrl::Vector6D & target_vector)
 {
   target_vector(0) = frame.p.x();
   target_vector(1) = frame.p.y();
@@ -558,6 +574,8 @@ void CartesianControllerBase::publishStateFeedback()
 
     m_feedback_twist_publisher->unlockAndPublish();
   }
+
+  // End-effector 
 }
 
 }  // namespace cartesian_controller_base

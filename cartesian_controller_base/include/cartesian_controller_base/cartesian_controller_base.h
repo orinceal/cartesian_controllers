@@ -44,7 +44,7 @@
 #include <cartesian_controller_base/SpatialPDController.h>
 #include <cartesian_controller_base/Utility.h>
 #include <realtime_tools/realtime_publisher.hpp>
-
+#include <realtime_tools/realtime_buffer.hpp>
 #include <controller_interface/controller_interface.hpp>
 #include <functional>
 #include <geometry_msgs/msg/pose_stamped.hpp>
@@ -118,7 +118,7 @@ protected:
      * @param error The error to minimize and apply gains to
      * @param key string parameter to access pd gain parameter map in SpatialPDController, current options: "force_gain", "motion_gain"
      */  
-  ctrl::Vector6D applyPDGains(const std::string & key, const ctrl::Vector6D & error)
+  ctrl::Vector6D applyPDGains(const std::string & key, const ctrl::Vector6D & error);
 
   /**
      * @brief Compute one control step using forward dynamics simulation
@@ -151,6 +151,16 @@ protected:
   ctrl::Matrix6D displayInBaseLink(const ctrl::Matrix6D & tensor, const std::string & from);
 
   /**
+     * @brief Display the given wrench in the robot base frame
+     *
+     * @param wrench The quantity to transform
+     * @param from The reference frame where the quantity was formulated
+     *
+     * @return The quantity in the robot base frame
+     */    
+  KDL::Wrench displayInBaseLink(const KDL::Wrench & wrench, const std::string & from);
+
+  /**
      * @brief Display a given vector in a new reference frame
      *
      * The vector is assumed to be given in the robot base frame.
@@ -159,7 +169,7 @@ protected:
      * @param to The reference frame in which to formulate the quantity
      *
      * @return The quantity in the new frame
-     */
+     */     
   ctrl::Vector6D displayInTipLink(const ctrl::Vector6D & vector, const std::string & to);
 
   /**
@@ -192,7 +202,7 @@ protected:
    * @brief Helper method to convert KDL Frame to Eigen::Matrix<double, 6, 1> for ROS2 introspection 
    */
   void updateIntrospectionVector(const KDL::Frame & frame, ctrl::Vector6D & target_vector);
-
+  
   KDL::Chain m_robot_chain;
 
   std::shared_ptr<KDL::TreeFkSolverPos_recursive> m_forward_kinematics_solver;
@@ -202,14 +212,19 @@ protected:
      */
   std::shared_ptr<pluginlib::ClassLoader<IKSolver>> m_solver_loader;
   std::shared_ptr<IKSolver> m_ik_solver;
+  SpatialPDController m_spatial_controller;
 
   // Dynamic parameters
   std::string m_end_effector_link;
   std::string m_robot_base_link;
   int m_iterations;
-
+ 
   std::vector<std::reference_wrapper<hardware_interface::LoanedStateInterface>>
     m_joint_state_pos_handles;
+ 
+  // ROS 2 params
+  bool m_publish_state_fb;
+  bool m_enable_introspection;
 
 private:
   /**
@@ -251,7 +266,6 @@ private:
   std::vector<std::string> m_joint_names;
   unsigned int m_number_joints;
   trajectory_msgs::msg::JointTrajectoryPoint m_simulated_joint_motion;
-  SpatialPDController m_spatial_controller;
   ctrl::Vector6D m_cartesian_input;
 
   // Against multi initialization in multi inheritance scenarios
@@ -268,9 +282,7 @@ private:
   std::string m_robot_description;
   std::string m_redundant_ns_key = "redundant_ns";
   
-  // ROS 2 params
-  bool m_publish_state_fb;
-  bool m_enable_introspection;
+
 };
 
 }  // namespace cartesian_controller_base

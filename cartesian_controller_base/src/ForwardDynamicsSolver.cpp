@@ -114,16 +114,16 @@ trajectory_msgs::msg::JointTrajectoryPoint ForwardDynamicsSolver::getJointContro
   Eigen::VectorXd tau_repulse_ns = P * (tau_repulse);
 
   // calculate damping data in joint space (tau_s = -k_vq * H(q) * q_dot (see eqns 64 and 65 in https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=1087068))
-  Eigen::VectorXd kvq_diag = Eigen::VectorXd::Constant(m_number_joints, 0.01);
+  Eigen::VectorXd kvq_diag = Eigen::VectorXd::Constant(m_number_joints, m_k_vq_ns);
   // kvq_diag(0) = 5.0;
   Eigen::MatrixXd K_vq = kvq_diag.asDiagonal();
-  Eigen::VecotrXd tau_s = -K_vq * m_jnt_space_inertia.data * m_last_velocities.data;
+  Eigen::VectorXd tau_s = -K_vq * m_jnt_space_inertia.data * m_last_velocities.data;
 
   // joint accelerations according to: \f$ \ddot{q} = H^{-1} ( J^T f + B \dot{q}) \f$
   // use Cholesky decomposition (LDLT )instead of inverse to solve for q_ddot 
-  m_current_accelerations.data = m_jnt_space_inertia.data.ldlt().solve(tau_tip_accel + tau_s + tau_repulse_ns);
+  m_current_accelerations.data = m_jnt_space_inertia.data.ldlt().solve(tau_tip_accel + tau_s); // + tau_repulse_ns);
   // m_current_accelerations.data = m_jnt_space_inertia.data.inverse() * (tau_tip_accel - tau_damping + tau_nullsp);
-  // applyAccelLimits();
+  //applyAccelLimits();
   // Numerical time integration with the Euler forward method
   m_current_velocities.data = m_last_velocities.data + m_current_accelerations.data * period.seconds();
   // m_current_velocities.data *= 0.9;  // 10 % global damping against unwanted null space motion.
@@ -216,7 +216,7 @@ bool ForwardDynamicsSolver::init(std::shared_ptr<rclcpp_lifecycle::LifecycleNode
   m_jnt_space_inertia.resize(m_number_joints);
   // Set the initial value if provided at runtime, else use default value.
   m_min = auto_declare(m_params + ".link_mass", 0.1);
-
+  m_k_vq_ns = 0.0;
   // initialize null space safe joint position subscriber
   // m_ns_jnt_sub = nh->create_subscription<sensor_msgs::msg::JointState>("/optimal_joints", 1,
   // std::bind(&ForwardDynamicsSolver::nsStateCallback, this, std::placeholders::_1));
@@ -227,8 +227,6 @@ bool ForwardDynamicsSolver::init(std::shared_ptr<rclcpp_lifecycle::LifecycleNode
   auto qos = rclcpp::QoS(1).transient_local();
   m_wall_info_sub = nh->create_subscription<geometry_msgs::msg::Pose>("/wall_info", qos,
   std::bind(&ForwardDynamicsSolver::wallPtCallback, this, std::placeholders::_1));
-
-
 
   RCLCPP_INFO(nh->get_logger(), "Forward dynamics solver initialized");
   RCLCPP_INFO(nh->get_logger(), "Forward dynamics solver has control over %i joints",
@@ -244,6 +242,11 @@ void ForwardDynamicsSolver::updateKinematics() {
   m_jnt_jacobian_solver->JntToJac(m_current_positions, m_jnt_jacobian);
 
   IKSolver::updateKinematics();
+}
+
+void ForwardDynamicsSolver::setNsDampingGain(double k_vq_ns) {
+  m_k_vq_ns = k_vq_ns;
+  RCLCPP_INFO(get_logger(), "ForwardDynamicsSolver gain m_k_vq_ns set: %f", m_k_vq_ns);
 }
 
 bool ForwardDynamicsSolver::buildGenericModel()
@@ -263,7 +266,7 @@ bool ForwardDynamicsSolver::buildGenericModel()
     else if (m_chain.segments[i].getJoint().getType() == KDL::Joint::TransAxis) {
       // set higher mass for slider joint
       m_chain.segments[i].setInertia(
-      KDL::RigidBodyInertia(1.0, KDL::Vector::Zero(), KDL::RotationalInertia(1.0, 1.0, 1.0)));
+      KDL::RigidBodyInertia(0.2, KDL::Vector::Zero(), KDL::RotationalInertia(0.2, 0.2, 0.2)));
       jnt_seg_idx.at(j) = i;
       j++;
     } 
@@ -382,10 +385,10 @@ Eigen::VectorXd ForwardDynamicsSolver::calculatePosturalBias()
   Eigen::VectorXd tau_posture = Eigen::VectorXd::Zero(m_number_joints);
   double target_slider = 0.7;
   double target_joint_0 = -1.0310025243621384;
-  double target_joint_1 = -1.079621483313169; // 1.3197741; // joint # 2 
-  double target_joint_2 = -2.2760698537115203; // 1.6451501; // -2.4502983; // joint # 3  1.9221925081028903
+  // double target_joint_1 = -1.079621483313169; // 1.3197741; // joint # 2 
+  // double target_joint_2 = -2.2760698537115203; // 1.6451501; // -2.4502983; // joint # 3  1.9221925081028903
   //double target_joint_3 = 0.4009423; //-1.4048959; // joint # 4 0.4048958903577902
-  double k_p = 0.05;
+  // double k_p = 0.05;
   double k_d = 0.005;
   tau_posture(0) = 0.1 * (target_slider - m_current_positions(0)) - k_d * m_current_velocities(0);
   tau_posture(1) = 0.07 * (target_joint_0 - m_current_positions(1)) - k_d * m_current_velocities(1);

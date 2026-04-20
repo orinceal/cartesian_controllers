@@ -99,25 +99,39 @@ protected:
      * @return The remaining error wrench, given in robot base frame
      */
   ctrl::Vector6D computeForceError();
-  std::string m_new_ft_sensor_ref;
   void setFtSensorReferenceFrame(const std::string & new_ref);
+    /**
+     * @brief Publish the target wrench, filtered sensor wrench and wrench error. 
+     *
+     * The data are w.r.t. the specified robot base link.
+     * Corresponds to the current error that has been evaluated in this control cycle.
+     */
+  void publishWrenches(const rclcpp::Time& time);
+  std::string m_new_ft_sensor_ref;
+  ctrl::Vector6D m_wrench_error;
+  std::string m_gain_key = "force";
 
+  // for ROS2 introspection / plotting
+  KDL::Wrench m_target_wrench_base;
+  KDL::Wrench m_sensor_wrench_base;
+  KDL::Wrench m_wrench_error_kdl;
+  realtime_tools::RealtimePublisherSharedPtr<geometry_msgs::msg::WrenchStamped> m_target_wrench_pub;
+  realtime_tools::RealtimePublisherSharedPtr<geometry_msgs::msg::WrenchStamped> m_sensor_wrench_base_pub;
+  realtime_tools::RealtimePublisherSharedPtr<geometry_msgs::msg::WrenchStamped> m_wrench_error_pub;
 private:
   void targetWrenchCallback(const geometry_msgs::msg::WrenchStamped::SharedPtr wrench);
   void ftSensorWrenchCallback(const geometry_msgs::msg::WrenchStamped::SharedPtr wrench);
 
+  geometry_msgs::msg::Wrench KDLWrenchToWrenchMsg(const KDL::Wrench& kdl_wrench);
+  // Subscribers
   rclcpp::Subscription<geometry_msgs::msg::WrenchStamped>::SharedPtr m_target_wrench_subscriber;
   rclcpp::Subscription<geometry_msgs::msg::WrenchStamped>::SharedPtr m_ft_sensor_wrench_subscriber;
-  ctrl::Vector6D m_target_wrench;
-  ctrl::Vector6D m_ft_sensor_wrench;
+  // Buffers to store received data safely
+  realtime_tools::RealtimeBuffer<KDL::Wrench> m_target_wrench_buffer;
+  realtime_tools::RealtimeBuffer<KDL::Wrench> m_ft_sensor_wrench_buffer;
   std::string m_ft_sensor_ref_link;
   KDL::Frame m_ft_sensor_transform;
-  std::string m_gain_key = "force";
-  std::mutex m_wrench_mutex;
-  // for ROS 2 Introspection
-  ctrl::Vector6D m_target_wrench_base;
-  ctrl::Vector6D m_sensor_wrench_base;
-  ctrl::Vector6D m_wrench_error;
+  // std::mutex m_wrench_mutex;
   /**
      * Allow users to choose whether to specify their target wrenches in the
      * end-effector frame (= True) or the base frame (= False). The first one

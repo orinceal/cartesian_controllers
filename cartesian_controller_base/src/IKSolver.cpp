@@ -93,10 +93,18 @@ bool IKSolver::setStartState(
 
 void IKSolver::synchronizeJointPositions(
   const std::vector<std::reference_wrapper<hardware_interface::LoanedStateInterface> > &
-    joint_pos_handles)
+    joint_pos_handles, const rclcpp::Duration & period)
 {
+  // M1 Alpha Blending
   const double alpha = 0.1;
   static bool first_sync = true;
+
+  // M2 Snap within tolerance
+  // const double tolerance = 0.0005;
+
+  // M3
+  const double max_tracking_rate = 0.5;
+  const double max_delta = max_tracking_rate * period.seconds();
 
   for (size_t i = 0; i < joint_pos_handles.size(); ++i)
   {
@@ -106,15 +114,28 @@ void IKSolver::synchronizeJointPositions(
     {
       auto opt_value = joint_pos_handles[i].get().get_optional();
       if (opt_value.has_value()){
-        double q_isaac = opt_value.value();
+        double q_real = opt_value.value();
       
+        // M1
         if (first_sync) {
-          m_current_positions(i) = q_isaac;
+          m_current_positions(i) = q_real;
         } else {
         // blend new reading with existing internal state
-        m_current_positions(i) = (1.0 - alpha) * m_current_positions(i) + alpha * q_isaac;
+        //m_current_positions(i) = (1.0 - alpha) * m_current_positions(i) + alpha * q_real;
+
+        // M2
+        // only update if difference is outside the noise threshold
+        // if (std::abs(q_real - m_current_positions(i)) > tolerance) {
+        //   m_current_positions(i) = q_real;
+        // }
+        // m_last_positions(i) = m_current_positions(i);
+
+        // M3
+        double error = q_real - m_current_positions(i);
+        // clamp to max change per cycle
+        double clamped = std::clamp(error, -max_delta, max_delta);
+        m_current_positions(i) += clamped;
         }
-        m_last_positions(i) = m_current_positions(i);
       }
     }
   }

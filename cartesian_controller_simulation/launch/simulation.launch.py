@@ -100,8 +100,8 @@ def generate_launch_description():
             ("cartesian_compliance_controller/target_frame", "target_frame"),
             ("cartesian_force_controller/target_wrench", "target_wrench"),
             ("cartesian_compliance_controller/target_wrench", "target_wrench"),
-            ("cartesian_force_controller/ft_sensor_wrench", "ft_sensor_wrench"),
-            ("cartesian_compliance_controller/ft_sensor_wrench", "ft_sensor_wrench"),
+            ("cartesian_force_controller/isaac_sensor_wrench", "isaac_sensor_wrench"),
+            ("cartesian_compliance_controller/isaac_sensor_wrench", "isaac_sensor_wrench"),
         ],
     )
 

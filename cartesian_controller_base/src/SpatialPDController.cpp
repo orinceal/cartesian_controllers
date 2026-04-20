@@ -52,10 +52,13 @@ ctrl::Vector6D SpatialPDController::operator()(const std::string & key, const ct
 ctrl::Vector6D SpatialPDController::operator()(const std::string & key, const ctrl::Vector6D & error, 
                                                const ctrl::Vector6D & current_vel)
 {
+  if (m_pd_map.find(key) == m_pd_map.end()) {
+    return ctrl::Vector6D::Zero();
+  }
   // Perform pd control separately on each Cartesian dimension
   for (int i = 0; i < 6; ++i)  // 3 transition, 3 rotation
   {
-    m_cmd(i) = m_pd_map[key][i](error[i], current_vel[i]);
+    m_cmd(i) = m_pd_map.at(key)[i]->operator()(error[i], current_vel[i]);
   }
   return m_cmd;
 }
@@ -71,31 +74,22 @@ ctrl::Vector6D SpatialPDController::operator()(const std::string & key, const ct
 //   return m_cmd;
 // }
 
-bool SpatialPDController::init(std::shared_ptr<rclcpp_lifecycle::LifecycleNode> handle,
+bool SpatialPDController::init(rclcpp_lifecycle::LifecycleNode* handle,
                                const std::string & key)
 {
   // check if key is already initialized
   if (m_pd_map.count(key) > 0 && !m_pd_map[key].empty())
   { return true;
   }
-
   // Create pd controllers for each Cartesian dimension
-  std::vector<std::string> axes = {".trans_x", ".trans_y", ".trans_z", ".rot_x", ".rot_y", ".rot_z"}
+  std::vector<std::string> axes = {".trans_x", ".trans_y", ".trans_z", ".rot_x", ".rot_y", ".rot_z"};
+  m_pd_map[key].reserve(6);
 
   for (int i = 0; i < 6; ++i)  // 3 transition, 3 rotation
   {
-    m_pd_map[key].push_back(PDController());
-    m_pd_map[key][i].init(key + axes[i], handle);
+    m_pd_map[key].push_back(std::make_unique<PDController>());
+    m_pd_map[key][i]->init(key + axes[i], handle);
   }
-
-  // std::string gains_config = "pd_gains";
-  // m_pd_controllers[0].init(key + ".trans_x", handle);
-  // m_pd_controllers[1].init(key + ".trans_y", handle);
-  // m_pd_controllers[2].init(gains_config + ".trans_z", handle);
-  // m_pd_controllers[3].init(gains_config + ".rot_x", handle);
-  // m_pd_controllers[4].init(gains_config + ".rot_y", handle);
-  // m_pd_controllers[5].init(gains_config + ".rot_z", handle);
-
   return true;
 }
 

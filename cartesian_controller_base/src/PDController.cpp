@@ -48,29 +48,41 @@ PDController::PDController() {}
 PDController::~PDController() {}
 
 void PDController::init(const std::string & params,
-                        std::shared_ptr<rclcpp_lifecycle::LifecycleNode> handle)
+                        rclcpp_lifecycle::LifecycleNode* handle)
 {
   m_params = params;
-  m_handle = std::move(handle);
+  m_handle = handle->shared_from_this();
 
-  auto auto_declare = [this](const std::string & s)
+  auto auto_declare = [handle](const std::string & name) -> double
   {
-    if (!m_handle->has_parameter(s))
+    if (!handle->has_parameter(name))
     {
-      return m_handle->declare_parameter<double>(s, 0.0);
+      handle->declare_parameter(name, 0.0);
     }
-    return m_handle->get_parameter(s).as_double();
+    auto param = handle->get_parameter(name);
+
+    if (param.get_type() == rclcpp::ParameterType::PARAMETER_INTEGER) {
+      return static_cast<double>(param.as_int());
+    }
+    return param.as_double();
+    // return handle->get_parameter(name).as_double();
   };
 
   m_p = auto_declare(m_params + ".p");
   m_d = auto_declare(m_params + ".d");
 
   // parameter modification callback
-  m_callback_handle = m_handle->add_on_set_parameters_callback(
+  m_callback_handle = handle->add_on_set_parameters_callback(
     [this](const std::vector<rclcpp::Parameter> & parameters) {
       for (const auto & param : parameters) {
-        if (param.get_name() == m_params + ".p") m_p = param.as_double();
-        if (param.get_name() == m_params + ".d") m_d = param.as_double();
+        if (param.get_name() == m_params + ".p") {
+          m_p = (param.get_type() == rclcpp::ParameterType::PARAMETER_INTEGER)
+                ? static_cast<double>(param.as_int()) : param.as_double();
+        }
+        if (param.get_name() == m_params + ".d") {
+          m_d = (param.get_type() == rclcpp::ParameterType::PARAMETER_INTEGER)
+                ? static_cast<double>(param.as_int()) : param.as_double();
+        }
       }
       rcl_interfaces::msg::SetParametersResult result;
       result.successful = true;
@@ -88,7 +100,7 @@ double PDController::operator()(const double & error, const double & current_vel
   // m_last_p_error = error;
 
   // apply p_gain on error and d_gain on actual velocity from forward kinematics
-  return result = (m_p * error) - (m_d * current_vel);
+  return (m_p * error) - (m_d * current_vel);
 }
 
 }  // namespace cartesian_controller_base
