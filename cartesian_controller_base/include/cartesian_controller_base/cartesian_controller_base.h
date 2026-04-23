@@ -173,6 +173,15 @@ protected:
   ctrl::Vector6D displayInTipLink(const ctrl::Vector6D & vector, const std::string & to);
 
   /**
+     * @brief Return the rotation from a given frame to the base frame
+     *
+     * @param from The reference frame in which to rotate from
+     *
+     * @return The rotation matrix to the base frame
+     */     
+  KDL::Rotation rotationToBase(const std::string & from);
+
+  /**
      * @brief Check if specified links are part of the robot chain
      *
      * @param s Link to check for existence

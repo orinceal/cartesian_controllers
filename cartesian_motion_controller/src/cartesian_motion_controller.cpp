@@ -182,9 +182,9 @@ ctrl::Vector6D CartesianMotionController::computeMotionError(const KDL::Frame& t
   m_rot_error_raw = rot_err;
 
   // deadband parameters
-  const double dist_deadband = 0.002;      // 2mm (absolute zero)
+  // const double dist_deadband = 0.002;      // 2mm (absolute zero)
   // const double dist_width = 0.004;    // 5mm (fade out zone)
-  const double rot_deadband  = 0.02;       // ~0.5 degrees
+  // const double rot_deadband  = 0.02;       // ~0.5 degrees
   // const double rot_width = 0.02;     // ~1.1 degrees
 
   // Clamp maximal tolerated error.
@@ -199,21 +199,22 @@ ctrl::Vector6D CartesianMotionController::computeMotionError(const KDL::Frame& t
 
   // apply deadband to each linear axis
   for (int i = 0; i < 3; ++i){
-    double d = std::abs(pos_err(i));
-    if (d < dist_deadband) {
-      m_motion_error(i) = 0.0;
-    } else {
+    // double d = std::abs(pos_err(i));
+    // if (d < dist_deadband) {
+    //   m_motion_error(i) = 0.0;
+    // } else {
       // double s = std::clamp((d - dist_deadband) / dist_width, 0.0, 1.0);
-      m_motion_error(i) = std::clamp(pos_err(i), -max_distance, max_distance);
-    }
+    m_motion_error(i) = std::clamp(pos_err(i), -max_distance, max_distance);
+    //}
   }
 
   // apply deadband to rotation
-  if (std::abs(angle) < rot_deadband) {
-    m_motion_error(3) = m_motion_error(4) = m_motion_error(5) = 0.0;
-  } else {
+  // if (std::abs(angle) < rot_deadband) {
+  //   m_motion_error(3) = m_motion_error(4) = m_motion_error(5) = 0.0;
+  // } else {
     // double s_rot  = std::clamp((angle - rot_deadband) / rot_width, 0.0, 1.0);
     //KDL::Vector scaled_rot = rot_axis * (angle * s_rot);
+  if (std::abs(angle) >= 0.0) {
     angle = std::clamp(angle, -max_angle, max_angle);
     rot_axis = rot_axis * angle;
     m_motion_error(3) = rot_axis(0);

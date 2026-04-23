@@ -242,7 +242,6 @@ CartesianControllerBase::on_configure(const rclcpp_lifecycle::State & previous_s
   m_iterations = get_node()->get_parameter("solver.iterations").as_int();
   m_error_scale = get_node()->get_parameter("solver.error_scale").as_double();
   double k_vq_ns = get_node()->get_parameter("redundant_ns.trans_x.p").as_double();
-  RCLCPP_INFO(get_node()->get_logger(), "k_vq_ns: %f", k_vq_ns);
   m_ik_solver->setNsDampingGain(k_vq_ns); // applies only to ForwardDynamicsSolver
 
   // Initialize gains k_vq for nullspace dissipation forces for redundant manipulator
@@ -524,6 +523,13 @@ ctrl::Vector6D CartesianControllerBase::displayInTipLink(const ctrl::Vector6D & 
   }
 
   return out;
+}
+
+KDL::Rotation CartesianControllerBase::rotationToBase(const std::string & from) 
+{
+  KDL::Frame transform_kdl;
+  m_forward_kinematics_solver->JntToCart(m_ik_solver->getPositions(), transform_kdl, from);
+  return transform_kdl.M;
 }
 
 void CartesianControllerBase::updateIntrospectionVector(const KDL::Frame & frame, ctrl::Vector6D & target_vector)

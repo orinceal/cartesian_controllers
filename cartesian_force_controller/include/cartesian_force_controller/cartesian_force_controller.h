@@ -99,13 +99,23 @@ protected:
      * @return The remaining error wrench, given in robot base frame
      */
   ctrl::Vector6D computeForceError();
-  void setFtSensorReferenceFrame(const std::string & new_ref);
-    /**
-     * @brief Publish the target wrench, filtered sensor wrench and wrench error. 
+
+  /**
+     * @brief Defines the fixed transformation from the ft_sensor frame to the new reference 
      *
-     * The data are w.r.t. the specified robot base link.
-     * Corresponds to the current error that has been evaluated in this control cycle.
-     */
+     * This assigns the fixed transformation that will be applied to the 
+     * forces and torques during the sensor reading callback, and saves the 
+     * frame that wrench readings are transformed to as the new internal sensor frame
+     * 
+     */  
+  void setFtSensorReferenceFrame(const std::string & new_ref);
+
+  /**
+   * @brief Publish the target wrench, filtered sensor wrench and wrench error. 
+   *
+   * The data are w.r.t. the specified robot base link.
+   * Corresponds to the current error that has been evaluated in this control cycle.
+   */
   void publishWrenches(const rclcpp::Time& time);
   std::string m_new_ft_sensor_ref;
   ctrl::Vector6D m_wrench_error;
@@ -131,14 +141,20 @@ private:
   realtime_tools::RealtimeBuffer<KDL::Wrench> m_ft_sensor_wrench_buffer;
   std::string m_ft_sensor_ref_link;
   KDL::Frame m_ft_sensor_transform;
-  // std::mutex m_wrench_mutex;
+  
   /**
      * Allow users to choose whether to specify their target wrenches in the
      * end-effector frame (= True) or the base frame (= False). The first one
      * is easier for explicit task programming, while the second one is more
      * intuitive for tele-manipulation.
      */
+
   bool m_hand_frame_control;
+  // Cycle parameters for updating rotational transformation to avoid jitter
+  int m_transform_update_counter{0};
+  int m_transform_update_cycle{10}; // recompute every 10 cycles = 20Hz at 200Hz
+  KDL::Rotation m_wrench_base_rot;
+
 };
 
 }  // namespace cartesfian_force_controller

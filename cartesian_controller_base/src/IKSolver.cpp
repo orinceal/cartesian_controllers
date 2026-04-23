@@ -204,13 +204,16 @@ void IKSolver::applyVelLimits()
 {
   for (int i = 0; i < m_number_joints; ++i)
   {
-    m_current_velocities(i) = 
-      std::clamp(m_current_velocities(i), -m_vel_limits(i), m_vel_limits(i));
-
-    // deadband to prevent integral drift
-    if (std::abs(m_current_velocities(i)) < m_vel_deadband) {
-      m_current_velocities(i) = 0.0;
+    double vel = m_current_velocities(i);
+    // apply deadband to prevent integral drift
+    if (std::abs(vel) < m_vel_deadband) {
+      vel = 0.0;
+    } else {
+      // subtract deadband to prevent jump when coming out of deadband
+      vel = (vel > 0) ? (vel - m_vel_deadband) : (vel + m_vel_deadband);
     }
+    // apply limit clamps
+    m_current_velocities(i) = std::clamp(vel, -m_vel_limits(i), m_vel_limits(i));
   }
 }
 

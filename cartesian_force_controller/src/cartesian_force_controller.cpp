@@ -86,7 +86,7 @@ CartesianForceController::on_configure(const rclcpp_lifecycle::State & previous_
     return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::ERROR;
   }
 
-  // Make sure sensor wrenches are interpreted correctly
+  // Define transformation that applies to sensor wrenches
   setFtSensorReferenceFrame(Base::m_end_effector_link);
 
   // get node pointer (lock the weak ptr)
@@ -104,16 +104,16 @@ CartesianForceController::on_configure(const rclcpp_lifecycle::State & previous_
     node_ptr->get_name() + std::string("/target_wrench"), 10,
     std::bind(&CartesianForceController::targetWrenchCallback, this, std::placeholders::_1));
 
-  m_ft_sensor_wrench_subscriber =
-    node_ptr->create_subscription<geometry_msgs::msg::WrenchStamped>(
-      node_ptr->get_name() + std::string("/isaac_sensor_wrench"), 10,
+  m_ft_sensor_wrench_subscriber = node_ptr->create_subscription<geometry_msgs::msg::WrenchStamped>(
+      node_ptr->get_name() + std::string("/isaac_sensor_wrench_filtered"), 10,
       std::bind(&CartesianForceController::ftSensorWrenchCallback, this, std::placeholders::_1));
 
-  // Initialize realtime buffers
+  // Initialize realtime buffers and parametes
   m_target_wrench_buffer.initRT(KDL::Wrench());
   m_ft_sensor_wrench_buffer.initRT(KDL::Wrench());
   // m_target_wrench.setZero();
   // m_ft_sensor_wrench.setZero();
+  m_hand_frame_control = get_node()->get_parameter("hand_frame_control").as_bool();
 
   // Controller-internal state publishing
   m_target_wrench_pub = 
@@ -175,25 +175,31 @@ controller_interface::return_type CartesianForceController::update(const rclcpp:
 
 ctrl::Vector6D CartesianForceController::computeForceError()
 {
-  m_hand_frame_control = get_node()->get_parameter("hand_frame_control").as_bool();
-  const auto target_wrench = *m_target_wrench_buffer.readFromRT();
-  
-  if (m_hand_frame_control)  // Assume end-effector frame by convention
-  {
-    m_target_wrench_base = Base::displayInBaseLink(target_wrench, Base::m_end_effector_link);
+  // compute rotation only every N cycles to reduce computational load
+  if (m_transform_update_counter ++ >= m_transform_update_cycle) {
+    m_transform_update_counter = 0;
+    m_wrench_base_rot = Base::rotationToBase(m_new_ft_sensor_ref);
   }
-  else  // Default to robot base frame
+  
+  const auto target_wrench = *m_target_wrench_buffer.readFromRT();
+  if (m_hand_frame_control)  // subscribed wrench is commanded in end-effector frame
+  {
+    // m_target_wrench_base = Base::displayInBaseLink(target_wrench, Base::m_end_effector_link);
+    m_target_wrench_base = m_wrench_base_rot * target_wrench; // assume target_wrench is given in the same frame as the transformed wrench reading
+  }
+  else  // subscribed wrench is already in base frame
   {
     m_target_wrench_base = target_wrench;
   }
 
   const auto current_wrench = *m_ft_sensor_wrench_buffer.readFromRT();
-  m_sensor_wrench_base = Base::displayInBaseLink(current_wrench, m_new_ft_sensor_ref);
-
+  // m_sensor_wrench_base = Base::displayInBaseLink(current_wrench, m_new_ft_sensor_ref);
+  m_sensor_wrench_base = m_wrench_base_rot * current_wrench; 
   // Superimpose target wrench and sensor wrench in base frame
   m_wrench_error_kdl = m_sensor_wrench_base + m_target_wrench_base;
   // RCLCPP_INFO(get_node()->get_logger(), "sensor_wrench transformed: %f %f %f %f %f %f", sensor_wrench(0), sensor_wrench(1), sensor_wrench(2), sensor_wrench(3), sensor_wrench(4), sensor_wrench(5));
   // return Base::displayInBaseLink(m_ft_sensor_wrench, m_new_ft_sensor_ref) + target_wrench;
+
   for (int i=0; i < 6; ++i){
     m_wrench_error[i] = m_wrench_error_kdl(i);
   }
@@ -217,11 +223,8 @@ void CartesianForceController::setFtSensorReferenceFrame(const std::string & new
   KDL::Frame new_sensor_ref;
   Base::m_forward_kinematics_solver->JntToCart(jnts, new_sensor_ref, m_new_ft_sensor_ref);
 
-  // set transformation from new_ref to sensor
+  // set transformation from sensor to new_ref
   m_ft_sensor_transform = new_sensor_ref.Inverse() * sensor_ref;
-  // double roll, pitch, yaw;
-  // m_ft_sensor_transform.M.GetRPY(roll, pitch, yaw);
-  // RCLCPP_INFO(get_node()->get_logger(), "m_ft_sensor_transform: Position: [%.4f %.4f %.4f] | RPY: [%.4f %.4f %.4f]", m_ft_sensor_transform.p.x(), m_ft_sensor_transform.p.y(), m_ft_sensor_transform.p.z(), roll, pitch, yaw);
 }
 
 void CartesianForceController::targetWrenchCallback(
@@ -279,6 +282,7 @@ void CartesianForceController::ftSensorWrenchCallback(
 
   // Compute how the measured wrench appears in the frame of interest.
   tmp = m_ft_sensor_transform * tmp;
+  // RCLCPP_INFO(get_node()->get_logger(), "sensor_wrench transformed: %f %f %f %f %f %f", tmp(0), tmp(1), tmp(2), tmp(3), tmp(4), tmp(5));
 
   // TODO: m_gravity_compensated_wrench = transformed_wrench - tool_gravity_wrench; // subtract weight of tool after transformation not before. but apply tare before transformation!
   m_ft_sensor_wrench_buffer.writeFromNonRT(tmp);

@@ -98,30 +98,43 @@ trajectory_msgs::msg::JointTrajectoryPoint ForwardDynamicsSolver::getJointContro
   weights(0) = 3.0; // higher weight for slider 
   Eigen::MatrixXd W_inv = weights.cwiseInverse().asDiagonal();
   Eigen::MatrixXd J = m_jnt_jacobian.data;
-  double lambda =  0.05;
+  // double lambda =  0.05;
 
   // J_pinv = W_inv * J^T * (J * W_inv * J^T + lambda^2 * I)^-1
-  Eigen::MatrixXd JJT_weighted = J * W_inv * J.transpose();
-  Eigen::MatrixXd damping = (lambda * lambda) * Eigen::MatrixXd::Identity(6, 6);
-  Eigen::MatrixXd J_pinv_wdls = W_inv * J.transpose() * (JJT_weighted + damping).inverse();
+  // Eigen::MatrixXd JJT_weighted = J * W_inv * J.transpose();
+  // Eigen::MatrixXd damping = (lambda * lambda) * Eigen::MatrixXd::Identity(6, 6);
+  // Eigen::MatrixXd J_pinv_wdls = W_inv * J.transpose() * (JJT_weighted + damping).inverse();
 
   // calculate null space projector
-  Eigen::MatrixXd I = Eigen::MatrixXd::Identity(m_number_joints, m_number_joints);
-  Eigen::MatrixXd P = I - (J_pinv_wdls * J);
+  // Eigen::MatrixXd I = Eigen::MatrixXd::Identity(m_number_joints, m_number_joints);
+  // Eigen::MatrixXd P = I - (J_pinv_wdls * J);
 
-  Eigen::VectorXd tau_repulse = calculateRepulsionGradient();
-  // Eigen::VectorXd tau_bias_ns = calculatePosturalBias();
-  Eigen::VectorXd tau_repulse_ns = P * (tau_repulse);
+  // Eigen::VectorXd tau_repulse = calculateRepulsionGradient();
+  // // Eigen::VectorXd tau_bias_ns = calculatePosturalBias();
+  // Eigen::VectorXd tau_repulse_ns = P * (tau_repulse);
 
   // calculate damping data in joint space (tau_s = -k_vq * H(q) * q_dot (see eqns 64 and 65 in https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=1087068))
   Eigen::VectorXd kvq_diag = Eigen::VectorXd::Constant(m_number_joints, m_k_vq_ns);
   // kvq_diag(0) = 5.0;
+  kvq_diag(5) = 3 * m_k_vq_ns;
+  kvq_diag(4) = 2 * m_k_vq_ns;
   Eigen::MatrixXd K_vq = kvq_diag.asDiagonal();
   Eigen::VectorXd tau_s = -K_vq * m_jnt_space_inertia.data * m_last_velocities.data;
+  // Khatib formulation
+  // Operational space mass matrix: Lambda = (J * H^{-1} * J^T)^{-1} 
+  Eigen::MatrixXd HinvJT = m_jnt_space_inertia.data.ldlt().solve(J.transpose()); // H^{-1} J^T, size: n_joints x 6
+  Eigen::MatrixXd Lambda_inv = J * HinvJT; // J H^{-1} J^T, size: 6 x 6
+  Eigen::MatrixXd Lambda_inv_damped = Lambda_inv + 0.001 * Eigen::MatrixXd::Identity(6, 6);
+
+  // J^# = H^{-1} * J^T * lambda 
+  Eigen::VectorXd Jsharp_f = HinvJT * Lambda_inv_damped.ldlt().solve(net_force);
+  Eigen::VectorXd Hinv_tau_s = m_jnt_space_inertia.data.ldlt().solve(tau_s);
+
+  m_current_accelerations.data = Jsharp_f + Hinv_tau_s;
 
   // joint accelerations according to: \f$ \ddot{q} = H^{-1} ( J^T f + B \dot{q}) \f$
   // use Cholesky decomposition (LDLT )instead of inverse to solve for q_ddot 
-  m_current_accelerations.data = m_jnt_space_inertia.data.ldlt().solve(tau_tip_accel + tau_s); // + tau_repulse_ns);
+  // m_current_accelerations.data = m_jnt_space_inertia.data.ldlt().solve(tau_tip_accel + tau_s); // + tau_repulse_ns);
   // m_current_accelerations.data = m_jnt_space_inertia.data.inverse() * (tau_tip_accel - tau_damping + tau_nullsp);
   //applyAccelLimits();
   // Numerical time integration with the Euler forward method
@@ -246,7 +259,6 @@ void ForwardDynamicsSolver::updateKinematics() {
 
 void ForwardDynamicsSolver::setNsDampingGain(double k_vq_ns) {
   m_k_vq_ns = k_vq_ns;
-  RCLCPP_INFO(get_logger(), "ForwardDynamicsSolver gain m_k_vq_ns set: %f", m_k_vq_ns);
 }
 
 bool ForwardDynamicsSolver::buildGenericModel()
