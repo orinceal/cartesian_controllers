@@ -130,7 +130,9 @@ public:
      * The internal model's joint velocity is not sychronized. This makes the
      * solver more stable. Derived IK solvers should implement how to keep or
      * reset those values.
-     *
+     * 
+     * Uses rate limiter and drift threshold when with simulation due to noise from
+     * from physics solver. Sync directly from encorders on real hardware.
      * @param joint_pos_handles Read handles to the joint positions.
      */
   void synchronizeJointPositions(
@@ -176,6 +178,7 @@ protected:
      */
   void applyJointLimits();
   void applyVelLimits();
+  void filterVel();
   void applyAccelLimits();
 
   template <typename ParameterT>
@@ -200,8 +203,10 @@ protected:
   int m_number_joints;
 
   // Internal buffers
-  KDL::JntArray m_current_positions;
+  KDL::JntArray m_current_positions;  // virtual model joint positions
+  KDL::JntArray m_real_positions;  // actual hardware positions
   KDL::JntArray m_current_velocities;
+  KDL::JntArray m_filt_velocities;
   KDL::JntArray m_current_accelerations;
   KDL::JntArray m_last_positions;
   KDL::JntArray m_last_velocities;
@@ -212,9 +217,10 @@ protected:
   KDL::JntArray m_lower_pos_limits;
   KDL::JntArray m_vel_limits;
   KDL::JntArray m_accel_limits;
-  double m_vel_deadband = 0.0004; // 0.0005;
-  double m_accel_deadband = 0.003;
-  
+  const double m_vel_deadband = 0.0004; // 0.0005;
+  const double m_accel_deadband = 0.003;
+  const double m_vel_filter_cutoff = 5.0; // Hz 
+
   // Forward kinematics
   std::shared_ptr<KDL::ChainFkSolverPos_recursive> m_fk_pos_solver;
   std::shared_ptr<KDL::ChainFkSolverVel_recursive> m_fk_vel_solver;

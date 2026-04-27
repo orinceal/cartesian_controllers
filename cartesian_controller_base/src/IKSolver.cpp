@@ -78,8 +78,10 @@ bool IKSolver::setStartState(
       }
       m_current_velocities(i) = 0.0;
       m_current_accelerations(i) = 0.0;
+      m_real_positions(i) = m_current_positions(i);
       m_last_positions(i) = m_current_positions(i);
       m_last_velocities(i) = m_current_velocities(i);
+      m_filt_velocities(i) = m_current_velocities(i);
       // initialize beginning safe positions
       m_ns_positions(i) = m_current_positions(i);
     }
@@ -91,56 +93,83 @@ bool IKSolver::setStartState(
   return true;
 }
 
+// when syncing with simulation, requires rate limiter and drift threshold to filter noise from physics solver
 void IKSolver::synchronizeJointPositions(
   const std::vector<std::reference_wrapper<hardware_interface::LoanedStateInterface> > &
     joint_pos_handles, const rclcpp::Duration & period)
 {
   // M1 Alpha Blending
-  const double alpha = 0.1;
-  static bool first_sync = true;
+  // const double alpha = 0.1;
+  const double pos_cutoff_hz = 10.0;
+  const double tau = 1.0 / (2.0 * M_PI * pos_cutoff_hz);
+  const double alpha = period.seconds() / (tau + period.seconds()); // at 200Hz with 10Hz cutoff, alpha = 0.005/(0.016 + 0.005) = 0.24
 
   // M2 Snap within tolerance
   // const double tolerance = 0.0005;
 
   // M3
-  const double max_tracking_rate = 0.5;
-  const double max_delta = max_tracking_rate * period.seconds();
+  // const double max_tracking_rate = 0.5;
+  // const double max_delta = max_tracking_rate * period.seconds();
 
   for (size_t i = 0; i < joint_pos_handles.size(); ++i)
   {
     // Interface type should be checked by the caller.
     // Add additional plausibility check just in case.
-    if (joint_pos_handles[i].get().get_interface_name() == hardware_interface::HW_IF_POSITION)
-    {
-      auto opt_value = joint_pos_handles[i].get().get_optional();
-      if (opt_value.has_value()){
-        double q_real = opt_value.value();
-      
-        // M1
-        if (first_sync) {
-          m_current_positions(i) = q_real;
-        } else {
-        // blend new reading with existing internal state
-        //m_current_positions(i) = (1.0 - alpha) * m_current_positions(i) + alpha * q_real;
+    if (joint_pos_handles[i].get().get_interface_name() != hardware_interface::HW_IF_POSITION){
+      continue;
+    }
+    
+    auto opt = joint_pos_handles[i].get().get_optional();
+    if (!opt.has_value()) continue;
 
-        // M2
-        // only update if difference is outside the noise threshold
-        // if (std::abs(q_real - m_current_positions(i)) > tolerance) {
-        //   m_current_positions(i) = q_real;
-        // }
-        // m_last_positions(i) = m_current_positions(i);
+    double q_real = opt.value();
+    // M0 direct sync
 
-        // M3
-        double error = q_real - m_current_positions(i);
-        // clamp to max change per cycle
-        double clamped = std::clamp(error, -max_delta, max_delta);
-        m_current_positions(i) += clamped;
-        }
-      }
+    // M1 EMA filter
+    m_real_positions(i) = (1.0 - alpha) * m_real_positions(i) + alpha * q_real;
+    //m_current_positions(i) = (1.0 - alpha) * m_current_positions(i) + alpha * q_real;
+
+    // M2
+    // only update if difference is outside the noise threshold
+    // if (std::abs(q_real - m_current_positions(i)) > tolerance) {
+    //   m_current_positions(i) = q_real;
+    // }
+    // m_last_positions(i) = m_current_positions(i);
+
+    // M3 rate limiter on real positions to suppress physics noise
+    // on real robot, this rate limit never activates
+    // double error = q_real - m_real_positions(i);
+    // double max_delta = 0.1 * period.seconds(); // max rate = max_delta/dt = 0.0005/0.005 = 0.1 rad/s -> 0.0005 rad/cycle
+    // clamp to max change per cycle
+    // m_real_positions(i) += std::clamp(error, -max_delta, max_delta);
+
+    // correct large drifts in virtual model to reduce velocity noise from integration
+    double virtual_drift = q_real - m_current_positions(i);
+    if (std::abs(virtual_drift) > 0.03) { //  drift threshold: 0.05rad = 50mrad 
+      double correction = 0.02 * period.seconds(); 
+      m_current_positions(i) += std::clamp(virtual_drift, -correction, correction);
+      RCLCPP_WARN_THROTTLE(m_handle->get_logger(),*m_handle->get_clock(), 1000,
+      "Joint %zu virtual drift %.4f rad", i, virtual_drift);
     }
   }
-  first_sync = false;
 }
+
+// For use with real hardware we can sync directly from encoders without filtering
+// void IKSolver::synchronizeJointPositions(
+//   const std::vector<std::reference_wrapper<hardware_interface::LoanedStateInterface> > &
+//     joint_pos_handles)
+// {
+//   for (size_t i = 0; i < joint_pos_handles.size(); ++i)
+//   {
+//     // Interface type should be checked by the caller.
+//     // Add additional plausibility check just in case.
+//     if (joint_pos_handles[i].get().get_interface_name() == hardware_interface::HW_IF_POSITION)
+//     {
+//       m_current_positions(i) = joint_pos_handles[i].get().get_value();
+//       m_last_positions(i) = m_current_positions(i);
+//     }
+//   }
+// }
 
 bool IKSolver::init(std::shared_ptr<rclcpp_lifecycle::LifecycleNode> nh, const KDL::Chain & chain,
                     const KDL::JntArray & upper_pos_limits, const KDL::JntArray & lower_pos_limits,
@@ -151,7 +180,9 @@ bool IKSolver::init(std::shared_ptr<rclcpp_lifecycle::LifecycleNode> nh, const K
   m_chain = chain;
   m_number_joints = m_chain.getNrOfJoints();
   m_current_positions.data = ctrl::VectorND::Zero(m_number_joints);
+  m_real_positions.data = ctrl::VectorND::Zero(m_number_joints);
   m_current_velocities.data = ctrl::VectorND::Zero(m_number_joints);
+  m_filt_velocities.data = ctrl::VectorND::Zero(m_number_joints);
   m_current_accelerations.data = ctrl::VectorND::Zero(m_number_joints);
   m_last_positions.data = ctrl::VectorND::Zero(m_number_joints);
   m_last_velocities.data = ctrl::VectorND::Zero(m_number_joints);
@@ -172,12 +203,15 @@ bool IKSolver::init(std::shared_ptr<rclcpp_lifecycle::LifecycleNode> nh, const K
 
 void IKSolver::updateKinematics()
 {
-  // Pose w. r. t. base
-  m_fk_pos_solver->JntToCart(m_current_positions, m_end_effector_pose);
-
+  // Pose w. r. t. base 
+  // m_fk_pos_solver->JntToCart(m_current_positions, m_end_effector_pose); // virtual positions
+  m_fk_pos_solver->JntToCart(m_real_positions, m_end_effector_pose); // real positions from hardware sync
+  // apply filtering to current velocities
+  filterVel();
   // Absolute velocity w. r. t. base
   KDL::FrameVel vel;
-  m_fk_vel_solver->JntToCart(KDL::JntArrayVel(m_current_positions, m_current_velocities), vel);
+  // m_fk_vel_solver->JntToCart(KDL::JntArrayVel(m_current_positions, m_current_velocities), vel);
+  m_fk_vel_solver->JntToCart(KDL::JntArrayVel(m_current_positions, m_filt_velocities), vel);
   m_end_effector_vel[0] = vel.deriv().vel.x();
   m_end_effector_vel[1] = vel.deriv().vel.y();
   m_end_effector_vel[2] = vel.deriv().vel.z();
@@ -212,8 +246,20 @@ void IKSolver::applyVelLimits()
       // subtract deadband to prevent jump when coming out of deadband
       vel = (vel > 0) ? (vel - m_vel_deadband) : (vel + m_vel_deadband);
     }
-    // apply limit clamps
+    // apply hard limit clamps
     m_current_velocities(i) = std::clamp(vel, -m_vel_limits(i), m_vel_limits(i));
+  }
+}
+
+void IKSolver::filterVel()
+{
+  // filter velocities
+  const double dt = 0.005; // controller period
+  const double tau = 1.0/(2.0 * M_PI * m_vel_filter_cutoff);
+  const double alpha = dt / (tau + dt);
+
+  for (int i=0; i < m_number_joints; ++i) {
+    m_filt_velocities(i) = (1.0 - alpha) * m_filt_velocities(i) + alpha * m_current_velocities(i);
   }
 }
 

@@ -79,10 +79,10 @@ trajectory_msgs::msg::JointTrajectoryPoint ForwardDynamicsSolver::getJointContro
 {  
   // Compute joint space inertia matrix with actualized link masses
   // buildGenericModel();
-  // m_jnt_space_inertia_solver->JntToMass(m_current_positions, m_jnt_space_inertia);
+  m_jnt_space_inertia_solver->JntToMass(m_current_positions, m_jnt_space_inertia);
 
   // Compute joint jacobian
-  // m_jnt_jacobian_solver->JntToJac(m_current_positions, m_jnt_jacobian);
+  m_jnt_jacobian_solver->JntToJac(m_current_positions, m_jnt_jacobian);
   
   // joint tip accelerations J^T f
   Eigen::VectorXd tau_tip_accel = m_jnt_jacobian.data.transpose() * net_force;
@@ -113,11 +113,17 @@ trajectory_msgs::msg::JointTrajectoryPoint ForwardDynamicsSolver::getJointContro
   // // Eigen::VectorXd tau_bias_ns = calculatePosturalBias();
   // Eigen::VectorXd tau_repulse_ns = P * (tau_repulse);
 
+  // scale damping to H^{-1} amplification
+  // Eigen::VectorXd h_diag = m_jnt_space_inertia.data.diagonal();
+  // double h_max = h_diag.maxCoeff();
+
   // calculate damping data in joint space (tau_s = -k_vq * H(q) * q_dot (see eqns 64 and 65 in https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=1087068))
   Eigen::VectorXd kvq_diag = Eigen::VectorXd::Constant(m_number_joints, m_k_vq_ns);
-  // kvq_diag(0) = 5.0;
-  kvq_diag(5) = 3 * m_k_vq_ns;
-  kvq_diag(4) = 2 * m_k_vq_ns;
+  // Eigen::VectorXd kvq_diag(m_number_joints);
+  // for (int i = 0; i < m_number_joints; ++i) {
+  //   kvq_diag(i) = m_k_vq_ns * (h_max / h_diag(i));
+  //   kvq_diag(i) = std::min(kvq_diag(i), 5.0 * m_k_vq_ns);
+  // }
   Eigen::MatrixXd K_vq = kvq_diag.asDiagonal();
   Eigen::VectorXd tau_s = -K_vq * m_jnt_space_inertia.data * m_last_velocities.data;
   // Khatib formulation
@@ -135,24 +141,19 @@ trajectory_msgs::msg::JointTrajectoryPoint ForwardDynamicsSolver::getJointContro
   // joint accelerations according to: \f$ \ddot{q} = H^{-1} ( J^T f + B \dot{q}) \f$
   // use Cholesky decomposition (LDLT )instead of inverse to solve for q_ddot 
   // m_current_accelerations.data = m_jnt_space_inertia.data.ldlt().solve(tau_tip_accel + tau_s); // + tau_repulse_ns);
-  // m_current_accelerations.data = m_jnt_space_inertia.data.inverse() * (tau_tip_accel - tau_damping + tau_nullsp);
   //applyAccelLimits();
   // Numerical time integration with the Euler forward method
   m_current_velocities.data = m_last_velocities.data + m_current_accelerations.data * period.seconds();
   // m_current_velocities.data *= 0.9;  // 10 % global damping against unwanted null space motion.
   //                                    // Will cause exponential slow-down without input.
 
-  // RCLCPP_INFO(get_logger(), "velocities: %f %f %f %f %f %f %f", m_current_velocities(0), m_current_velocities(1), m_current_velocities(2),
-  //             m_current_velocities(3), m_current_velocities(4), m_current_velocities(5), m_current_velocities(6));
- 
   applyVelLimits();
-
-  // RCLCPP_INFO(get_logger(), "velocities: %f %f %f %f %f %f %f", m_current_velocities(0), m_current_velocities(1), m_current_velocities(2),
-  //             m_current_velocities(3), m_current_velocities(4), m_current_velocities(5), m_current_velocities(6));
-
+  
+  // virtual model positions for Jacobian consistency
   m_current_positions.data = m_last_positions.data + m_current_velocities.data * period.seconds();
   // Make sure positions stay in allowed margins
   applyJointLimits();
+
   // Apply results
   trajectory_msgs::msg::JointTrajectoryPoint control_cmd;
   for (int i = 0; i < m_number_joints; ++i)
@@ -246,15 +247,6 @@ bool ForwardDynamicsSolver::init(std::shared_ptr<rclcpp_lifecycle::LifecycleNode
               m_number_joints);
 
   return true;
-}
-
-void ForwardDynamicsSolver::updateKinematics() {
-  // Compute joint space inertia matrix with actualized link masses
-  m_jnt_space_inertia_solver->JntToMass(m_current_positions, m_jnt_space_inertia);
-  // Compute joint jacobian
-  m_jnt_jacobian_solver->JntToJac(m_current_positions, m_jnt_jacobian);
-
-  IKSolver::updateKinematics();
 }
 
 void ForwardDynamicsSolver::setNsDampingGain(double k_vq_ns) {
