@@ -76,7 +76,7 @@ public:
      * \return A point holding positions, velocities and accelerations of each joint
      */
   trajectory_msgs::msg::JointTrajectoryPoint getJointControlCmds(
-    rclcpp::Duration period, const ctrl::Vector6D & net_force) override;
+    const rclcpp::Duration & period, const ctrl::Vector6D & net_force) override;
 
   /**
      * \brief Initialize the solver

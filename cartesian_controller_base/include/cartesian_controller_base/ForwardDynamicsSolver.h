@@ -93,7 +93,7 @@ public:
      * @return A point holding positions, velocities and accelerations of each joint
      */
   trajectory_msgs::msg::JointTrajectoryPoint getJointControlCmds(
-    rclcpp::Duration period, const ctrl::Vector6D & net_force) override;
+    const rclcpp::Duration & period, const ctrl::Vector6D & net_force) override;
 
   /**
      * @brief Initialize the solver
@@ -109,16 +109,20 @@ public:
   bool init(std::shared_ptr<rclcpp_lifecycle::LifecycleNode> nh, const KDL::Chain & chain,
             const KDL::JntArray & upper_pos_limits, const KDL::JntArray & lower_pos_limits,
             const KDL::JntArray & vel_limits, const KDL::JntArray & accel_limits) override;
-  void setNsDampingGain(double k_vq_ns) override; //{m_k_vq_ns = k_vq_ns;};
+  void setNsDampingGain(double k_vq_ns) override {m_k_vq_ns = k_vq_ns;}
 private:
-  //! Build a generic robot model for control
+  // Build a generic robot model for control
   bool buildGenericModel();
-  // get desired null space joint states
-//   void nsStateCallback(const sensor_msgs::msg::JointState::SharedPtr msg);
   void wallPtCallback(const geometry_msgs::msg::Pose::SharedPtr msg);
+  
+  // Methods for defining collision capsules and corresponding tau from wall repulsion
+  void computeCapsuleClearance(const LinkCapsule& capsule, double & clearance_a, double & clearance_b);
+  void initializeCapsuleClearances();
+  double addCollisionRepulsion(Eigen::VectorXd& tau_repulse, const rclcpp::Duration& period);
 
-  Eigen::VectorXd calculateRepulsionGradient();
-  Eigen::VectorXd calculatePosturalBias();
+  // NOT USED: Methods for getting desired null space joint states and to evaluate with a "desired" posture
+  // void nsStateCallback(const sensor_msgs::msg::JointState::SharedPtr msg);
+  // Eigen::VectorXd calculatePosturalBias();
 
   // Forward dynamics
   std::shared_ptr<KDL::ChainJntToJacSolver> m_jnt_jacobian_solver;
@@ -131,7 +135,7 @@ private:
   KDL::JntArray gravity_comp;
 
   // Dynamic parameters
-  const std::string m_params = "solver.forward_dynamics";  ///< namespace for parameter access
+  const std::string m_params = "solver.forward_dynamics";  // namespace for parameter access
   rclcpp::Logger get_logger() const {return m_handle->get_logger();}
 
   double m_gravity_factor;
@@ -140,9 +144,10 @@ private:
 //   static inline const Eigen::Vector3d DEFAULT_POINT{1.5583340887, 0.10459256172180176, 0.8};
   Eigen::Vector3d wall_normal_;
   Eigen::Vector3d wall_point_;
-  bool has_wall_point_{false};
   std::vector<int> jnt_seg_idx;
   double m_k_vq_ns;
+  double m_lambda{0.05};
+  std::vector<LinkCapsule> collision_capsules_;
 
   /**
      * Virtual link mass
@@ -150,7 +155,7 @@ private:
      * more does the end-effector (which has a unit mass of 1.0) dominate dynamic
      * behavior. Near singularities, a bigger value leads to smoother motion.
      */
-  std::atomic<double> m_min = 0.001; //0.1; // 0.002; // 0.05; // 0.1;
+  std::atomic<double> m_min = 0.0005; //0.1; // 0.002; // 0.05; // 0.1;
 };
 
 }  // namespace cartesian_controller_base

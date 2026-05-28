@@ -49,6 +49,7 @@
 
 namespace cartesian_force_controller
 {
+
 /**
  * @brief A ROS2-control controller for Cartesian force control
  *
@@ -91,7 +92,7 @@ public:
                                            const rclcpp::Duration & period) override;
 
   using Base = cartesian_controller_base::CartesianControllerBase;
-
+  
 protected:
   /**
      * @brief Compute the net force of target wrench and measured sensor wrench
@@ -99,6 +100,12 @@ protected:
      * @return The remaining error wrench, given in robot base frame
      */
   ctrl::Vector6D computeForceError();
+
+  /**
+     * @brief update internal contact state to enable or disable additional force damping
+     *
+     */
+  void updateContactState();
 
   /**
      * @brief Defines the fixed transformation from the ft_sensor frame to the new reference 
@@ -120,7 +127,7 @@ protected:
   std::string m_new_ft_sensor_ref;
   ctrl::Vector6D m_wrench_error;
   std::string m_gain_key = "force";
-
+  cartesian_controller_base::ContactState m_contact_state;
   // for ROS2 introspection / plotting
   KDL::Wrench m_target_wrench_base;
   KDL::Wrench m_sensor_wrench_base;
@@ -131,6 +138,7 @@ protected:
 private:
   void targetWrenchCallback(const geometry_msgs::msg::WrenchStamped::SharedPtr wrench);
   void ftSensorWrenchCallback(const geometry_msgs::msg::WrenchStamped::SharedPtr wrench);
+  void contactCheck(double force_magnitude, double release_threshold, const rclcpp::Time& now);
 
   geometry_msgs::msg::Wrench KDLWrenchToWrenchMsg(const KDL::Wrench& kdl_wrench);
   // Subscribers
@@ -152,9 +160,18 @@ private:
   bool m_hand_frame_control;
   // Cycle parameters for updating rotational transformation to avoid jitter
   int m_transform_update_counter{0};
-  int m_transform_update_cycle{10}; // recompute every 10 cycles = 20Hz at 200Hz
+  int m_transform_update_cycle{5}; // recompute every 10 cycles = 20Hz at 200Hz
   KDL::Rotation m_wrench_base_rot;
 
+  // parameters for contact state detection
+  rclcpp::Time m_release_timer;
+  rclcpp::Time m_impact_timer;
+  rclcpp::Time m_settle_timer;
+  bool m_release_timer_running{false};
+  bool m_settle_timer_running{false};
+  double m_release_contact_duration{2.0};
+  double m_max_impact_duration{2.0};
+  double m_min_settle_duration{0.5};  
 };
 
 }  // namespace cartesfian_force_controller

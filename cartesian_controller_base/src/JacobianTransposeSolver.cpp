@@ -65,7 +65,7 @@ JacobianTransposeSolver::JacobianTransposeSolver() {}
 JacobianTransposeSolver::~JacobianTransposeSolver() {}
 
 trajectory_msgs::msg::JointTrajectoryPoint JacobianTransposeSolver::getJointControlCmds(
-  rclcpp::Duration period, const ctrl::Vector6D & net_force)
+  const rclcpp::Duration & period, const ctrl::Vector6D & net_force)
 {
   // Compute joint jacobian
   m_jnt_jacobian_solver->JntToJac(m_current_positions, m_jnt_jacobian);

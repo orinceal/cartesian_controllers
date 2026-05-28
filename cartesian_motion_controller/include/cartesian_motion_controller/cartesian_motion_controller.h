@@ -121,17 +121,15 @@ protected:
   // Buffer to store received commands safely
   realtime_tools::RealtimeBuffer<KDL::Frame> m_target_frame_buffer;
   // Publishers 
+  realtime_tools::RealtimePublisherSharedPtr<geometry_msgs::msg::PoseStamped> m_target_pose_publisher;
   realtime_tools::RealtimePublisherSharedPtr<geometry_msgs::msg::Vector3Stamped> m_pos_error_publisher;
   realtime_tools::RealtimePublisherSharedPtr<geometry_msgs::msg::Vector3Stamped> m_rot_error_publisher;
-
-  // KDL::Frame m_target_frame;
-  KDL::Frame m_current_frame;
   
   // for ROS2 introspection / plotting
   ctrl::Vector6D m_motion_error; // error after deadband clamping
   KDL::Vector m_pos_error_raw;
   KDL::Rotation m_rot_error_raw;
-
+  KDL::Frame m_target_frame;
   // std::mutex m_target_mutex;
   std::string m_gain_key = "motion";
   

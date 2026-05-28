@@ -94,6 +94,10 @@ CartesianMotionController::on_configure(const rclcpp_lifecycle::State & previous
   m_target_frame_buffer.initRT(KDL::Frame());
 
   // Controller-internal state publishing
+  m_target_pose_publisher = 
+    std::make_shared<realtime_tools::RealtimePublisher<geometry_msgs::msg::PoseStamped>>(
+      node_ptr->create_publisher<geometry_msgs::msg::PoseStamped>(
+        std::string(node_ptr->get_name()) + "/target_frame_filtered", 3));
   m_pos_error_publisher = 
     std::make_shared<realtime_tools::RealtimePublisher<geometry_msgs::msg::Vector3Stamped>>(
       node_ptr->create_publisher<geometry_msgs::msg::Vector3Stamped>(
@@ -111,12 +115,7 @@ CartesianMotionController::on_activate(const rclcpp_lifecycle::State & previous_
 {
   Base::on_activate(previous_state);
 
-  // Reset simulation with real joint state
-  // m_current_frame = Base::m_ik_solver->getEndEffectorPose();
-
-  // Start where we are
-  // m_target_frame = m_current_frame;
-  // reset buffer to where we are 
+  // reset buffer to start where we are 
   m_target_frame_buffer.initRT(Base::m_ik_solver->getEndEffectorPose());
 
   return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::SUCCESS;
@@ -178,14 +177,15 @@ ctrl::Vector6D CartesianMotionController::computeMotionError(const KDL::Frame& t
   //double distance = error_kdl.p.Normalize();
 
   // store raw errors for publishing before deadband/clamping
+  m_target_frame = target_frame;
   m_pos_error_raw = pos_err;
   m_rot_error_raw = rot_err;
 
   // deadband parameters
-  // const double dist_deadband = 0.002;      // 2mm (absolute zero)
-  // const double dist_width = 0.004;    // 5mm (fade out zone)
-  // const double rot_deadband  = 0.02;       // ~0.5 degrees
-  // const double rot_width = 0.02;     // ~1.1 degrees
+  const double dist_deadband = 0.0005;      // 1mm (absolute zero)
+  const double dist_width = 0.004;    // 5mm (fade out zone)
+  const double rot_deadband  = 0.005;       // ~0.57 degrees
+  const double rot_width = 0.015;     // ~1.1 degrees
 
   // Clamp maximal tolerated error.
   // The remaining error will be handled in the next control cycle.
@@ -197,14 +197,15 @@ ctrl::Vector6D CartesianMotionController::computeMotionError(const KDL::Frame& t
 
   // ctrl::Vector6D raw_x_ddot = (x_dot - m_last_x_dot) / dt;
 
-  // apply deadband to each linear axis
+  // apply deadband to x and y linear axis
   for (int i = 0; i < 3; ++i){
-    // double d = std::abs(pos_err(i));
-    // if (d < dist_deadband) {
+    double d = std::abs(pos_err(i));
+    // if (d <= dist_deadband) {
     //   m_motion_error(i) = 0.0;
-    // } else {
-      // double s = std::clamp((d - dist_deadband) / dist_width, 0.0, 1.0);
-    m_motion_error(i) = std::clamp(pos_err(i), -max_distance, max_distance);
+    // } 
+    // else {
+    double s = std::clamp((d - dist_deadband) / dist_width, 0.0, 1.0);
+    m_motion_error(i) = std::clamp(pos_err(i), -max_distance, max_distance) * s;
     //}
   }
 
@@ -212,16 +213,21 @@ ctrl::Vector6D CartesianMotionController::computeMotionError(const KDL::Frame& t
   // if (std::abs(angle) < rot_deadband) {
   //   m_motion_error(3) = m_motion_error(4) = m_motion_error(5) = 0.0;
   // } else {
-    // double s_rot  = std::clamp((angle - rot_deadband) / rot_width, 0.0, 1.0);
-    //KDL::Vector scaled_rot = rot_axis * (angle * s_rot);
-  if (std::abs(angle) >= 0.0) {
-    angle = std::clamp(angle, -max_angle, max_angle);
-    rot_axis = rot_axis * angle;
-    m_motion_error(3) = rot_axis(0);
-    m_motion_error(4) = rot_axis(1);
-    m_motion_error(5) = rot_axis(2);
-  }
-
+  double s_rot  = std::clamp((angle - rot_deadband) / rot_width, 0.0, 1.0);
+  angle = std::clamp(angle, -max_angle, max_angle) * s_rot;
+  rot_axis = rot_axis * angle;
+  m_motion_error(3) = rot_axis(0);
+  m_motion_error(4) = rot_axis(1);
+  m_motion_error(5) = rot_axis(2);
+  //KDL::Vector scaled_rot = rot_axis * (angle * s_rot);
+  // if (std::abs(angle) >= 0.0) {
+  //   angle = std::clamp(angle, -max_angle, max_angle);
+  //   KDL::Vector scaled = rot_axis * angle;
+  //   m_motion_error(3) = scaled(0);
+  //   m_motion_error(4) = scaled(1);
+  //   m_motion_error(5) = scaled(2);
+  // }
+  
   // // Scale errors to allowed magnitudes
   // rot_axis = rot_axis * angle;
   // error_kdl.p = error_kdl.p * distance;
@@ -279,12 +285,6 @@ void CartesianMotionController::targetFrameCallback(const geometry_msgs::msg::Po
   
   KDL::Frame smooth_target = filterTarget(target_raw);
   m_target_frame_buffer.writeFromNonRT(smooth_target); // non-blocking write    
-  // assign to member variable
-  // {
-  //   std::lock_guard<std::mutex> lock(m_target_mutex);
-  //   //m_target_frame = target_raw;
-  //   m_target_frame = smooth_target;
-  // }
 }
 
 KDL::Frame CartesianMotionController::filterTarget(const KDL::Frame & target_raw) {
@@ -293,9 +293,6 @@ KDL::Frame CartesianMotionController::filterTarget(const KDL::Frame & target_raw
     first_target_ = false;
     return filtered_target_frame_;
   }
-
-  // filtered_target_frame_ = target_raw;
-  // return filtered_target_frame_;
 
   double alpha = 0.1;
   // apply linear interpolation to position
@@ -342,6 +339,23 @@ void CartesianMotionController::publishMotionError(const rclcpp::Time& time) {
       msg.vector.z = yaw;
       m_rot_error_publisher->unlockAndPublish();
     }
+    if (m_target_pose_publisher && m_target_pose_publisher->trylock()){
+      auto& msg = m_target_pose_publisher->msg_;
+      msg.header.stamp = time;
+      msg.header.frame_id = Base::m_robot_base_link;
+
+      msg.pose.position.x = m_target_frame.p.x();
+      msg.pose.position.y = m_target_frame.p.y();
+      msg.pose.position.z = m_target_frame.p.z();
+
+      double x, y, z, w;
+      m_target_frame.M.GetQuaternion(x, y, z, w);
+      msg.pose.orientation.x = x;
+      msg.pose.orientation.y = y;
+      msg.pose.orientation.z = z;
+      msg.pose.orientation.w = w;
+      m_target_pose_publisher->unlockAndPublish();
+    }    
   }
 }  // namespace cartesian_motion_controller
 

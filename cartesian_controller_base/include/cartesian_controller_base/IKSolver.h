@@ -86,7 +86,7 @@ public:
      * @return A point holding positions, velocities and accelerations of each joint
      */
   virtual trajectory_msgs::msg::JointTrajectoryPoint getJointControlCmds(
-    rclcpp::Duration period, const ctrl::Vector6D & net_force) = 0;
+    const rclcpp::Duration & period, const ctrl::Vector6D & net_force) = 0;
 
   /**
      * @brief Get the current end effector pose of the simulated robot
@@ -163,9 +163,18 @@ public:
   virtual void updateKinematics();
 
   /**
-   * @brief Sets the nullspace damping gain to add joint space damping for redundant robots. Applies only to ForwardDynamicsSolver  
+   * @brief Sets the nullspace damping gain to add joint space damping for redundant robots. 
+   * 
+   * Applies only to ForwardDynamicsSolver  
    */
   virtual void setNsDampingGain(double /*k_vq_ns*/) {} // Default implementation does nothing  
+
+  /**
+   * @brief Assigns the collision capsule data from urdf robot description. 
+   * 
+   * Applies only to ForwardDynamicsSolver  
+   */
+  // virtual void setCollisionCapsules(const std::vector<LinkCapsules> & /*capsules*/) {} // Default implementation does nothing  
 
 protected:
   /**
@@ -217,9 +226,13 @@ protected:
   KDL::JntArray m_lower_pos_limits;
   KDL::JntArray m_vel_limits;
   KDL::JntArray m_accel_limits;
-  const double m_vel_deadband = 0.0004; // 0.0005;
+  const double m_vel_deadband = 0.0004;
   const double m_accel_deadband = 0.003;
   const double m_vel_filter_cutoff = 5.0; // Hz 
+  double collision_clearance_{1.0};
+  double min_ttc_{std::numeric_limits<double>::max()};
+  double last_min_ttc_{std::numeric_limits<double>::max()};
+  double safety_factor_{0.0};
 
   // Forward kinematics
   std::shared_ptr<KDL::ChainFkSolverPos_recursive> m_fk_pos_solver;

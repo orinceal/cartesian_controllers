@@ -61,7 +61,21 @@ typedef Eigen::Matrix3d Matrix3D;
 typedef Eigen::Matrix<double, 6, 6> Matrix6D;
 
 typedef Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic> MatrixND;
-
 }  // namespace ctrl
 
+namespace cartesian_controller_base
+{
+enum class ContactState {FREE, IMPACT, CONTACT};   
+struct LinkCapsule {
+  std::string link_name;
+  int seg_idx{-1};
+  Eigen::Vector3d p_a; // endpoint A in link frame
+  Eigen::Vector3d p_b; // endpoint B in link frame
+  double radius{0.05}; // fallback radius
+  double last_d_a; // in base frame
+  double last_d_b;  // in base frame
+  bool valid{false};
+  bool initialized{false};
+};
+} // namespace cartesian_controller_base
 #endif

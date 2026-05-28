@@ -64,7 +64,7 @@
 #include "rclcpp_lifecycle/lifecycle_node.hpp"
 
 namespace cartesian_controller_base
-{
+{  
 /**
  * @brief Base class for each cartesian controller
  *
@@ -119,6 +119,17 @@ protected:
      * @param key string parameter to access pd gain parameter map in SpatialPDController, current options: "force_gain", "motion_gain"
      */  
   ctrl::Vector6D applyPDGains(const std::string & key, const ctrl::Vector6D & error);
+
+    /**
+     * @brief Apply contact-aware PD gains, enable/disable x_dot damping for force controller
+     *
+     * Velocity damping applies for both motion and force control. Check \ref SpatialPDController for details.
+     *
+     * @param error The error to minimize and apply gains to
+     * @param key string parameter to access pd gain parameter map in SpatialPDController, current options: "force_gain", "motion_gain"
+     * @param contact_state add a contact state to enable or disable additional force damping
+     */  
+  ctrl::Vector6D applyPDGains(const std::string & key, const ctrl::Vector6D & error, const ContactState contact_state);
 
   /**
      * @brief Compute one control step using forward dynamics simulation

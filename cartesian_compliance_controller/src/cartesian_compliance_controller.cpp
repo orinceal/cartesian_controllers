@@ -185,15 +185,16 @@ ctrl::Vector6D CartesianComplianceController::computeComplianceError(const KDL::
 
   // Sensor and target force in base orientation
   ForceBase::computeForceError();
-  ctrl::Vector6D force_command = Base::applyPDGains(ForceBase::m_gain_key, m_wrench_error);
+  ForceBase::updateContactState();
+  ctrl::Vector6D force_command = Base::applyPDGains(ForceBase::m_gain_key, m_wrench_error, ForceBase::m_contact_state);
 
   ctrl::Vector6D net_force = motion_command + force_command;
   //RCLCPP_INFO(get_node()->get_logger(), "force error: %f %f %f %f %f %f", force_error(0), force_error(1), force_error(2), force_error(3), force_error(4), force_error(5));
   // RCLCPP_INFO(get_node()->get_logger(), "net force error: %f %f %f %f %f %f", net_force(0), net_force(1), net_force(2), net_force(3), net_force(4), net_force(5));
 
   // apply force deadband
-  double f_threshold = 0.002; // N        based from simulation data noise tolerance 0.15-0.2N * K_pf gain (0.001)
-  double t_threshold = 0.002; // Nm
+  double f_threshold = 0.005; // N        based from simulation data noise tolerance 0.15-0.2N * K_pf gain (0.001)
+  double t_threshold = 0.005; // Nm
   
   for (int i = 0; i < 6; ++i) {
     double limit = (i < 3) ? f_threshold : t_threshold;

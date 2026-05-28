@@ -70,7 +70,7 @@ DampedLeastSquaresSolver::DampedLeastSquaresSolver() : m_alpha(0.01) {}
 DampedLeastSquaresSolver::~DampedLeastSquaresSolver() {}
 
 trajectory_msgs::msg::JointTrajectoryPoint DampedLeastSquaresSolver::getJointControlCmds(
-  rclcpp::Duration period, const ctrl::Vector6D & net_force)
+  const rclcpp::Duration & period, const ctrl::Vector6D & net_force)
 {
   // Compute joint jacobian
   m_jnt_jacobian_solver->JntToJac(m_current_positions, m_jnt_jacobian);

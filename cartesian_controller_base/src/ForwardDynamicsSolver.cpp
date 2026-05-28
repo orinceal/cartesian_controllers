@@ -75,78 +75,79 @@ ForwardDynamicsSolver::ForwardDynamicsSolver() {}
 ForwardDynamicsSolver::~ForwardDynamicsSolver() {}
 
 trajectory_msgs::msg::JointTrajectoryPoint ForwardDynamicsSolver::getJointControlCmds(
-  rclcpp::Duration period, const ctrl::Vector6D & net_force)
+  const rclcpp::Duration & period, const ctrl::Vector6D & net_force)
 {  
-  // Compute joint space inertia matrix with actualized link masses
-  // buildGenericModel();
+  // Compute joint space inertia matrix
   m_jnt_space_inertia_solver->JntToMass(m_current_positions, m_jnt_space_inertia);
 
   // Compute joint jacobian
   m_jnt_jacobian_solver->JntToJac(m_current_positions, m_jnt_jacobian);
+  Eigen::MatrixXd J = m_jnt_jacobian.data;  
   
   // joint tip accelerations J^T f
-  Eigen::VectorXd tau_tip_accel = m_jnt_jacobian.data.transpose() * net_force;
+  Eigen::VectorXd tau_tip_accel = J.transpose() * net_force;
 
-  // add additional joint forces to maintain "preferred" bias position
-  // Eigen::VectorXd q_error = m_ns_positions.data - m_current_positions.data;
-  // Eigen::VectorXd q_dot_error = -m_current_velocities.data; // assume q_dot_ns = 0
-  // double kp_null = 1.0;
-  // double kd_null = 0.2;
-  // Eigen::VectorXd tau_bias_ns = kp_null * q_error + kd_null * q_dot_error;
+  // calculate collision repulsion and get min clearance for all capsules
+  Eigen::VectorXd tau_repulse = Eigen::VectorXd::Zero(m_number_joints);
+  min_ttc_ = addCollisionRepulsion(tau_repulse, period); 
 
+  // WDLS pseudoinverse for null space projector
   Eigen::VectorXd weights = Eigen::VectorXd::Ones(m_number_joints);
-  weights(0) = 3.0; // higher weight for slider 
+  // weights(0) = 2.0; // higher weight for slider 
   Eigen::MatrixXd W_inv = weights.cwiseInverse().asDiagonal();
-  Eigen::MatrixXd J = m_jnt_jacobian.data;
-  // double lambda =  0.05;
+  double lambda =  0.001;
 
-  // J_pinv = W_inv * J^T * (J * W_inv * J^T + lambda^2 * I)^-1
-  // Eigen::MatrixXd JJT_weighted = J * W_inv * J.transpose();
-  // Eigen::MatrixXd damping = (lambda * lambda) * Eigen::MatrixXd::Identity(6, 6);
-  // Eigen::MatrixXd J_pinv_wdls = W_inv * J.transpose() * (JJT_weighted + damping).inverse();
+  // // J_pinv = W_inv * J^T * (J * W_inv * J^T + lambda^2 * I)^-1
+  Eigen::MatrixXd JJT = J * W_inv * J.transpose();
+  Eigen::MatrixXd damping = (lambda * lambda) * Eigen::MatrixXd::Identity(6, 6);
+  Eigen::MatrixXd J_pinv_wdls = W_inv * J.transpose() * (JJT + damping).inverse();
 
   // calculate null space projector
-  // Eigen::MatrixXd I = Eigen::MatrixXd::Identity(m_number_joints, m_number_joints);
-  // Eigen::MatrixXd P = I - (J_pinv_wdls * J);
+  Eigen::MatrixXd I = Eigen::MatrixXd::Identity(m_number_joints, m_number_joints);
+  Eigen::MatrixXd P = I - (J_pinv_wdls * J);
 
-  // Eigen::VectorXd tau_repulse = calculateRepulsionGradient();
-  // // Eigen::VectorXd tau_bias_ns = calculatePosturalBias();
-  // Eigen::VectorXd tau_repulse_ns = P * (tau_repulse);
+  // singularity check SVD
+  // Eigen::JacobiSVD<Eigen::MatrixXd> svd(J, Eigen::ComputeThinU | Eigen::ComputeThinV);
+  // double sigma_min = svd.singularValues().minCoeff();
 
-  // scale damping to H^{-1} amplification
-  // Eigen::VectorXd h_diag = m_jnt_space_inertia.data.diagonal();
-  // double h_max = h_diag.maxCoeff();
+  // const double sigma_threshold = 0.2;
+  // double ns_weight = std::clamp(sigma_min / sigma_threshold, 0.0, 1.0);
+ 
+  // double ns_check = P.norm() / std::sqrt(m_number_joints); // expected 0.378 for 7-DOF, P.norm() 
+  // // blend ns when available, direct when singular
+  // double ns_weight = std::clamp(P.norm(), 0.0, 1.0); // 
+  // RCLCPP_INFO_THROTTLE(get_logger(), *m_handle->get_clock(), 500,
+  //   "sigma_min: %.4f, ns_weight: %.3f", sigma_min, ns_weight);
+  
+  Eigen::VectorXd tau_repulse_ns = P * tau_repulse; // nullspace repulsion
+  // Eigen::VectorXd tau_repulse_blend = ns_weight  * tau_repulse_ns + (1 - ns_weight) *  tau_repulse;
 
-  // calculate damping data in joint space (tau_s = -k_vq * H(q) * q_dot (see eqns 64 and 65 in https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=1087068))
+  // calculate null space damping (tau_s = -k_vq * H(q) * q_dot (see eqns 64 and 65 in https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=1087068))
   Eigen::VectorXd kvq_diag = Eigen::VectorXd::Constant(m_number_joints, m_k_vq_ns);
-  // Eigen::VectorXd kvq_diag(m_number_joints);
-  // for (int i = 0; i < m_number_joints; ++i) {
-  //   kvq_diag(i) = m_k_vq_ns * (h_max / h_diag(i));
-  //   kvq_diag(i) = std::min(kvq_diag(i), 5.0 * m_k_vq_ns);
-  // }
   Eigen::MatrixXd K_vq = kvq_diag.asDiagonal();
   Eigen::VectorXd tau_s = -K_vq * m_jnt_space_inertia.data * m_last_velocities.data;
+
   // Khatib formulation
   // Operational space mass matrix: Lambda = (J * H^{-1} * J^T)^{-1} 
-  Eigen::MatrixXd HinvJT = m_jnt_space_inertia.data.ldlt().solve(J.transpose()); // H^{-1} J^T, size: n_joints x 6
-  Eigen::MatrixXd Lambda_inv = J * HinvJT; // J H^{-1} J^T, size: 6 x 6
-  Eigen::MatrixXd Lambda_inv_damped = Lambda_inv + 0.001 * Eigen::MatrixXd::Identity(6, 6);
+  // Eigen::MatrixXd HinvJT = m_jnt_space_inertia.data.ldlt().solve(J.transpose()); // H^{-1} J^T, size: n_joints x 6
+  // Eigen::MatrixXd Lambda_inv = J * HinvJT; // J H^{-1} J^T, size: 6 x 6
+  // Eigen::MatrixXd Lambda_inv_damped = Lambda_inv + 0.001 * Eigen::MatrixXd::Identity(6, 6);
 
   // J^# = H^{-1} * J^T * lambda 
-  Eigen::VectorXd Jsharp_f = HinvJT * Lambda_inv_damped.ldlt().solve(net_force);
-  Eigen::VectorXd Hinv_tau_s = m_jnt_space_inertia.data.ldlt().solve(tau_s);
+  // Eigen::VectorXd Jsharp_f = HinvJT * Lambda_inv_damped.ldlt().solve(net_force);
+  // Eigen::VectorXd Hinv_tau_s = m_jnt_space_inertia.data.ldlt().solve(tau_s);
+  // Eigen::VectorXd Hinv_repulse = m_jnt_space_inertia.data.ldlt().solve(tau_repulse);
 
-  m_current_accelerations.data = Jsharp_f + Hinv_tau_s;
+  // m_current_accelerations.data = Jsharp_f + Hinv_tau_s + Hinv_repulse;
 
   // joint accelerations according to: \f$ \ddot{q} = H^{-1} ( J^T f + B \dot{q}) \f$
   // use Cholesky decomposition (LDLT )instead of inverse to solve for q_ddot 
-  // m_current_accelerations.data = m_jnt_space_inertia.data.ldlt().solve(tau_tip_accel + tau_s); // + tau_repulse_ns);
+  m_current_accelerations.data = m_jnt_space_inertia.data.ldlt().solve(tau_tip_accel + tau_s); //+ tau_repulse_ns);
   //applyAccelLimits();
   // Numerical time integration with the Euler forward method
   m_current_velocities.data = m_last_velocities.data + m_current_accelerations.data * period.seconds();
-  // m_current_velocities.data *= 0.9;  // 10 % global damping against unwanted null space motion.
-  //                                    // Will cause exponential slow-down without input.
 
+  // Apply q_dot limits and additional damping if necessary                                     
   applyVelLimits();
   
   // virtual model positions for Jacobian consistency
@@ -182,38 +183,6 @@ bool ForwardDynamicsSolver::init(std::shared_ptr<rclcpp_lifecycle::LifecycleNode
 {
   IKSolver::init(nh, chain, upper_pos_limits, lower_pos_limits, vel_limits, accel_limits);
 
-  // double total_real_mass = 0.0;
-  // double total_virtual_mass = 0.0;
-
-  // for (size_t i = 0; i < m_chain.getNrOfSegments(); ++i)
-  // {
-  //   // 1. Accumulate Real Mass from URDF
-  //   double m_real = m_chain.getSegment(i).getInertia().getMass();
-  //   total_real_mass += m_real;
-
-  //   // 2. Predict Virtual Mass (mirroring buildGenericModel logic)
-  //   if (i == m_chain.getNrOfSegments() - 1)
-  //   {
-  //     total_virtual_mass += 1.0;
-  //   } else if (m_chain.getSegment(i).getJoint().getType() != KDL::Joint::None) {
-  //     total_virtual_mass += 0.1;
-  //   }
-  // }
-  // // 3. Calculate the Balloon Factor
-  // // Avoid division by zero
-  // if (total_virtual_mass > 0)f
-  // {
-  //   m_gravity_factor = total_real_mass / total_virtual_mass;
-  // }
-  // else
-  // {
-  //   m_gravity_factor = 1.0; 
-  // }
-
-  // RCLCPP_INFO(get_logger(), 
-  //             "Gravity Factor: %.2f (Real: %.2fkg, Virtual: %.2fkg)", 
-  //             m_gravity_factor, total_real_mass, total_virtual_mass);
-
   if (!buildGenericModel())
   {
     RCLCPP_ERROR(nh->get_logger(), "Something went wrong in setting up the internal model.");
@@ -223,14 +192,51 @@ bool ForwardDynamicsSolver::init(std::shared_ptr<rclcpp_lifecycle::LifecycleNode
   // Forward dynamics
   m_jnt_jacobian_solver = std::make_shared<KDL::ChainJntToJacSolver>(m_chain);
   m_jnt_space_inertia_solver = std::make_shared<KDL::ChainDynParam>(m_chain, KDL::Vector::Zero());
-  // m_jnt_jacobian_solver.reset(new KDL::ChainJntToJacSolver(m_chain));
-  // m_jnt_space_inertia_solver.reset(new KDL::ChainDynParam(m_chain, KDL::Vector::Zero()));
 
   m_jnt_jacobian.resize(m_number_joints);
   m_jnt_space_inertia.resize(m_number_joints);
   // Set the initial value if provided at runtime, else use default value.
-  m_min = auto_declare(m_params + ".link_mass", 0.1);
+  // m_min = auto_declare(m_params + ".link_mass", 0.1);
+  m_lambda = auto_declare(m_params + ".lambda", 0.05);
   m_k_vq_ns = 0.0;
+
+  // Define collision capsules. Dimensions measured from STL meshes
+  // find segment index by link name
+  auto findSegIdx = [this, nh](const std::string& link_name) -> int {
+      for (size_t i = 0; i < m_chain.segments.size(); ++i) {
+          if (m_chain.segments[i].getName() == link_name) {
+              return static_cast<int>(i);
+          }
+      }
+      RCLCPP_WARN(nh->get_logger(),
+          "Link %s not found in chain", link_name.c_str());
+      return -1;
+  };
+
+  // D116_customer_v1_1 — parent of joint_4 (motor body)
+  // CoM at (0.0635, 0, -0.013) — mostly along x
+  LinkCapsule joint_4_motor;
+  joint_4_motor.link_name = "D116_customer_v1_1";
+  joint_4_motor.p_a       = Eigen::Vector3d(0.0603,  0.0000,  0.0772);
+  joint_4_motor.p_b       = Eigen::Vector3d(0.0603,  0.0000, -0.0968);
+  joint_4_motor.radius    = 0.0698;
+  joint_4_motor.seg_idx   = findSegIdx(joint_4_motor.link_name);
+  joint_4_motor.valid     = joint_4_motor.seg_idx >= 0;
+  if (joint_4_motor.valid) collision_capsules_.push_back(joint_4_motor);
+
+  // D116_customer_v1_2 — parent of joint_5, lanze — child of joint_5
+  // LinkCapsule joint_5_motor;
+  // joint_5_motor.link_name = "D116_customer_v1_2";
+  // joint_5_motor.p_a       = Eigen::Vector3d(0.0001,  0.0619, 0.0631);
+  // joint_5_motor.p_b       = Eigen::Vector3d(0.0001, -0.0978, 0.0631);
+  // joint_5_motor.radius    = 0.0699;
+  // joint_5_motor.seg_idx = findSegIdx(joint_5_motor.link_name);
+  // joint_5_motor.valid     = joint_5_motor.seg_idx >= 0;
+  // if (joint_5_motor.valid) collision_capsules_.push_back(joint_5_motor);
+
+  RCLCPP_INFO(nh->get_logger(),
+      "Initialized %zu collision capsules", collision_capsules_.size());
+
   // initialize null space safe joint position subscriber
   // m_ns_jnt_sub = nh->create_subscription<sensor_msgs::msg::JointState>("/optimal_joints", 1,
   // std::bind(&ForwardDynamicsSolver::nsStateCallback, this, std::placeholders::_1));
@@ -249,15 +255,10 @@ bool ForwardDynamicsSolver::init(std::shared_ptr<rclcpp_lifecycle::LifecycleNode
   return true;
 }
 
-void ForwardDynamicsSolver::setNsDampingGain(double k_vq_ns) {
-  m_k_vq_ns = k_vq_ns;
-}
-
 bool ForwardDynamicsSolver::buildGenericModel()
 {
   // Set all masses and inertias to minimal (yet stable) values.
   double ip_min = 0.0001; //0.00001; //0.005; //0.002; //0.01;
-
   jnt_seg_idx.resize(m_number_joints);
   int j = 0;
   for (size_t i = 0; i < m_chain.segments.size(); ++i)  
@@ -270,7 +271,7 @@ bool ForwardDynamicsSolver::buildGenericModel()
     else if (m_chain.segments[i].getJoint().getType() == KDL::Joint::TransAxis) {
       // set higher mass for slider joint
       m_chain.segments[i].setInertia(
-      KDL::RigidBodyInertia(0.2, KDL::Vector::Zero(), KDL::RotationalInertia(0.2, 0.2, 0.2)));
+      KDL::RigidBodyInertia(0.5, KDL::Vector::Zero(), KDL::RotationalInertia(0.5, 0,5, 0.5)));
       jnt_seg_idx.at(j) = i;
       j++;
     } 
@@ -319,88 +320,220 @@ void ForwardDynamicsSolver::wallPtCallback(const geometry_msgs::msg::Pose::Share
   wall_point_.y() = msg->position.y;
   wall_point_.z() = msg->position.z;
   
-  Eigen::Quaterniond q(
-    msg->orientation.w, msg->orientation.x, msg->orientation.y, msg->orientation.z);
+  Eigen::Quaterniond q(msg->orientation.w, msg->orientation.x, msg->orientation.y, msg->orientation.z);
 
   wall_normal_ = q * Eigen::Vector3d::UnitX();
   wall_normal_.normalize();
-  RCLCPP_DEBUG(get_logger(), "wall info received. Normal: [%f, %f, %f]", wall_normal_.x(), wall_normal_.y(), wall_normal_.z());
+
+  RCLCPP_INFO(get_logger(), "wall info received. Point on wall: [%f, %f, %f], Normal: [%f, %f, %f]", wall_point_.x(), wall_point_.y(), wall_point_.z(), wall_normal_.x(), wall_normal_.y(), wall_normal_.z());
+
+  initializeCapsuleClearances();
 }
 
-Eigen::VectorXd ForwardDynamicsSolver::calculateRepulsionGradient()
+void ForwardDynamicsSolver::initializeCapsuleClearances()
 {
-  Eigen::VectorXd tau_repulse = Eigen::VectorXd::Zero(m_number_joints);
-  
-  const double rho = 0.15;  // Influence zone (15cm)
-  const double d_cap = 0.02; // cap at 2cm
-  const double eta = 250;  // tuning gain (stiffness)
-  
-  std::vector<int> joint_idx = {5, 6};
-  std::vector<int> valid_seg_idx;
-  valid_seg_idx.reserve(joint_idx.size());
-
-  // get joints from elbow onwards near to wall
-  for (int idx : joint_idx){
-    if (idx >= 0 && idx < m_number_joints) {
-      valid_seg_idx.push_back(jnt_seg_idx[idx]);
-    } else {
-      RCLCPP_WARN(m_handle->get_logger(), "joint index for repulsion calculation is out of bounds!");
-      return tau_repulse;
+    if (wall_normal_.isZero()) {
+      // no wall normal set for wall collision checking
+        return;
     }
-  }
-  for (int seg_idx : valid_seg_idx) {
-    KDL::Frame segment_frame;
-
-    m_fk_pos_solver->JntToCart(m_current_positions, segment_frame, seg_idx);
-    Eigen::Vector3d p_segment(segment_frame.p.x(), segment_frame.p.y(), segment_frame.p.z());
-
-    // calculate distance to wall by projecting on normal 
-    // d = (P_link - P_wall) . n
-    double d = (p_segment - wall_point_).dot(wall_normal_);
-    // RCLCPP_INFO(get_logger(), "distance d: %f", d);
-    // calculate repulsion if within influence zone
-    if (d > 0 && d < rho)
-    {
-      double effective_d = std::max(d, d_cap);
-  
-      // calculate repulsive force
-      // M1: Artificial Potential Field (APF) derivative
-      // double force_mag = eta * (1.0/d - 1.0/rho) * (1.0 / (d * d));
-      // M2: Linear pushback
-      // double force_mag = eta * (rho - d); 
-      // M3: Quadratic pushback (slightly more aggressive than linear):
-      double force_mag = eta * std::pow(rho - effective_d, 2);        
-
-      // force vector points along normal
-      Eigen::Vector3d f_cartesian = force_mag * wall_normal_;
-
-      // map to Joint Space
-      KDL::Jacobian J_segment(m_number_joints); 
-      m_jnt_jacobian_solver->JntToJac(m_current_positions, J_segment, seg_idx);
-      // project the 3D force through top 3 rows (linear part) of the Jacobian
-      tau_repulse += J_segment.data.topRows(3).transpose() * f_cartesian;
+    for (auto& capsule : collision_capsules_) {
+        if (!capsule.valid || capsule.seg_idx < 0) continue;
+        
+        double clearance_a, clearance_b;
+        computeCapsuleClearance(capsule, clearance_a, clearance_b);
+        
+        capsule.last_d_a = clearance_a;
+        capsule.last_d_b = clearance_b;
+        capsule.initialized = true;
+        RCLCPP_INFO(m_handle->get_logger(),
+            "Initialized %s: clearance_a=%.3fm clearance_b=%.3fm",
+            capsule.link_name.c_str(), clearance_a, clearance_b);
     }
-  }
-  return tau_repulse;
 }
-
-Eigen::VectorXd ForwardDynamicsSolver::calculatePosturalBias()
+void ForwardDynamicsSolver::computeCapsuleClearance(const LinkCapsule& capsule, double & clearance_a, double & clearance_b)
 {
-  Eigen::VectorXd tau_posture = Eigen::VectorXd::Zero(m_number_joints);
-  double target_slider = 0.7;
-  double target_joint_0 = -1.0310025243621384;
-  // double target_joint_1 = -1.079621483313169; // 1.3197741; // joint # 2 
-  // double target_joint_2 = -2.2760698537115203; // 1.6451501; // -2.4502983; // joint # 3  1.9221925081028903
-  //double target_joint_3 = 0.4009423; //-1.4048959; // joint # 4 0.4048958903577902
-  // double k_p = 0.05;
-  double k_d = 0.005;
-  tau_posture(0) = 0.1 * (target_slider - m_current_positions(0)) - k_d * m_current_velocities(0);
-  tau_posture(1) = 0.07 * (target_joint_0 - m_current_positions(1)) - k_d * m_current_velocities(1);
-  //tau_posture(2) = k_p * (target_joint_1 - m_current_positions(2)) - k_d * m_current_velocities(2);
-  //tau_posture(3) = k_p * (target_joint_2 - m_current_positions(3)) - k_d * m_current_velocities(3);
-  //tau_posture(4) = k_p * (target_joint_3 - m_current_positions(4)) - k_d * m_current_velocities(4);
+  // Get segment frame
+  KDL::Frame joint_frame;
+  m_fk_pos_solver->JntToCart(m_current_positions, joint_frame, capsule.seg_idx);
+  
+  Eigen::Matrix3d R;
+  for (int i = 0; i < 3; ++i)
+      for (int j = 0; j < 3; ++j)
+          R(i, j) = joint_frame.M.data[i * 3 + j];
+  Eigen::Vector3d t(joint_frame.p.x(), joint_frame.p.y(), joint_frame.p.z());
 
-  return tau_posture;
+  // transform endpoints to base frame
+  Eigen::Vector3d p_a_base = R * capsule.p_a + t;
+  Eigen::Vector3d p_b_base = R * capsule.p_b + t;
+
+  // signed distance from capsule endpoints to wall plane
+  double d_a = (p_a_base - wall_point_).dot(wall_normal_);
+  double d_b = (p_b_base - wall_point_).dot(wall_normal_);
+
+  clearance_a = d_a - capsule.radius;
+  clearance_b = d_b - capsule.radius;
 }
+
+double ForwardDynamicsSolver::addCollisionRepulsion(Eigen::VectorXd& tau_repulse, const rclcpp::Duration& period)
+{
+  double min_clearance = std::numeric_limits<double>::max();
+  double min_ttc = std::numeric_limits<double>::max(); // min time to collision
+  double clearance_dot = 0.0;
+  if (collision_capsules_.empty()) return min_ttc;
+  if (wall_normal_.isZero()) return min_ttc;
+
+  const double clearance_zone = 0.1;     // influence zone
+  const double rho = 0.06;
+  const double eta = 50.0;   // stiffness coeff
+  const double beta = 20.0; // damping coeff
+  const double d_cap = 0.02; // hard limit
+  const double dot_eps = 0.001; // ignore approach speeds below this
+  double dt = period.seconds();
+
+  for (auto& capsule : collision_capsules_) {
+      if (!capsule.valid || capsule.seg_idx < 0) continue;
+
+      // get min clearance and clearance_dot for capsule endpoints
+      double clearance_a, clearance_b;
+      computeCapsuleClearance(capsule, clearance_a, clearance_b);
+      double clearance_dot_a = 0.0;
+      double clearance_dot_b = 0.0;
+
+      if (capsule.initialized) {
+      clearance_dot_a = (clearance_a - capsule.last_d_a) / dt;
+      clearance_dot_b = (clearance_b - capsule.last_d_b) / dt;
+      } 
+
+      // get min clearance and max clearance_dot on current capsule
+      double clearance_d_min = std::min(clearance_a, clearance_b);
+      // double clearance_dot = std::min(clearance_dot_a, clearance_dot_b); 
+      clearance_dot = (std::abs(clearance_dot_a) > std::abs(clearance_dot_b)) ? clearance_dot_a : clearance_dot_b;
+      
+      // calculate time to collision if endpoint is approaching wall
+      if (clearance_dot_a < -dot_eps) { 
+      double ttc_a = clearance_a / std::abs(clearance_dot_a);
+      min_ttc = std::min(min_ttc, ttc_a);
+      }
+      if (clearance_dot_b < -dot_eps) {
+      double ttc_b = clearance_b / std::abs(clearance_dot_b);
+      min_ttc = std::min(min_ttc, ttc_b);
+      }
+
+      // track min clearance across all capsules
+      min_clearance = std::min(min_clearance, clearance_d_min);
+
+      // repulsion if within influence zone
+      if (clearance_d_min < clearance_zone) {
+          // spring term applied on capsule's minimum clearance
+          double effective = std::max(clearance_d_min, d_cap);
+          // double spring_force = eta * std::pow(rho - effective, 2); // quadratic
+          double spring_force = std::max(eta * (rho - effective), 0.0); // linear
+        
+          // double damping_force = (clearance_dot < 0.0) ? -beta * clearance_dot : 0.0; 
+          // damping on both positive and negative clearance_dot (moving towards or moving away)
+          double damping_force = -beta * clearance_dot; 
+          // double force_mag = std::max(spring_force + damping_force, 0.0);
+          double force_mag = spring_force + damping_force;
+          Eigen::Vector3d f_repulse = force_mag * wall_normal_; // positive force away from wall
+
+          // Jacobian at this segment
+          KDL::Jacobian J_seg(m_number_joints);
+          m_jnt_jacobian_solver->JntToJac(
+              m_current_positions, J_seg, capsule.seg_idx);
+          tau_repulse += J_seg.data.topRows(3).transpose() * f_repulse;
+      } 
+
+      capsule.last_d_a = clearance_a;
+      capsule.last_d_b = clearance_b;
+  }
+  collision_clearance_ = min_clearance;
+
+  // update safety factor for additional joint damping 
+  double safety_factor_static = std::clamp(((rho - min_clearance) / (rho - d_cap)), 0.0, 1.0);
+  double safety_factor_dynamic = std::clamp((5.0 - min_ttc) / (5.0 - 1.0), 0.0, 1.0);
+  safety_factor_ = std::max(safety_factor_static, safety_factor_dynamic);
+  // RCLCPP_INFO_THROTTLE(get_logger(), *m_handle->get_clock(), 500,
+  // "safety_factor_static: %.4f, safety_factor_dynamic: %.4f, min_clearance: %.4f, clearance_dot: %.4f, ttc: %.4f", safety_factor_static, safety_factor_dynamic, min_clearance, clearance_dot, min_ttc);
+
+  return min_ttc;
+}
+
+// Eigen::VectorXd ForwardDynamicsSolver::calculatePosturalBias()
+// {
+//   Eigen::VectorXd tau_posture = Eigen::VectorXd::Zero(m_number_joints);
+//   // double target_slider = 0.7;
+//   // double target_joint_0 = -1.0310025243621384;
+//   double target_joint_5 = 
+//   // double target_joint_1 = -1.079621483313169; // 1.3197741; // joint # 2 
+//   // double target_joint_2 = -2.2760698537115203; // 1.6451501; // -2.4502983; // joint # 3  1.9221925081028903
+//   //double target_joint_3 = 0.4009423; //-1.4048959; // joint # 4 0.4048958903577902
+//   // double k_p = 0.05;
+//   double k_d = 0.005;
+//   // tau_posture(1) = 0.07 * (target_joint_0 - m_current_positions(1)) - k_d * m_current_velocities(1);
+//   //tau_posture(2) = k_p * (target_joint_1 - m_current_positions(2)) - k_d * m_current_velocities(2);
+//   //tau_posture(3) = k_p * (target_joint_2 - m_current_positions(3)) - k_d * m_current_velocities(3);
+//   //tau_posture(4) = k_p * (target_joint_3 - m_current_positions(4)) - k_d * m_current_velocities(4);
+//   tau_posture(6) = k_p * (target_joint_5 - m_current_positions(6)) - k_d * m_current_velocities(5);
+//   return tau_posture;
+// }
+
+// Eigen::VectorXd ForwardDynamicsSolver::calculatePosturalBias()
+// {
+//     Eigen::VectorXd tau_posture = Eigen::VectorXd::Zero(m_number_joints);
+
+//     if (wall_normal_.isZero()) return tau_posture;  // no wall info yet
+
+//     const double k_d = 0.005;
+
+//     // Existing biases
+//     tau_posture(0) = 0.1  * (target_slider_  - m_current_positions(0))
+//                    - k_d * m_current_velocities(0);
+//     tau_posture(1) = 0.07 * (target_joint_0_ - m_current_positions(1))
+//                    - k_d * m_current_velocities(1);
+
+//     // Get current EE orientation
+//     KDL::Frame ee_frame;
+//     m_fk_pos_solver->JntToCart(m_current_positions, ee_frame);
+//     // Desired EE x-axis should align with wall normal (perpendicular approach)
+//     // wall_normal_ points OUT of wall, paintbrush should point INTO wall
+//     Eigen::Vector3d desired_approach = -wall_normal_;  // point into wall
+
+//     // Current EE x-axis (approach direction of paintbrush)
+//     Eigen::Vector3d current_approach(
+//         ee_frame.M.data[0],  // x column of rotation matrix
+//         ee_frame.M.data[3],
+//         ee_frame.M.data[6]);
+
+//     // Orientation error — cross product gives rotation axis, dot gives magnitude
+//     Eigen::Vector3d orient_error = current_approach.cross(desired_approach);
+//     double error_magnitude = orient_error.norm();
+
+//     if (error_magnitude > 1e-4) {
+//         // Map orientation error to joint torques via Jacobian (rotational part)
+//         KDL::Jacobian J_kdl(m_number_joints);
+//         m_jnt_jacobian_solver->JntToJac(m_current_positions, J_kdl);
+
+//         // Use only rotational rows (rows 3-5) of Jacobian
+//         Eigen::MatrixXd J_rot = J_kdl.data.bottomRows(3);  // 3 x n_joints
+
+//         // Project orientation error to joint torques
+//         const double kp_orient = 0.1;  // tune
+//         const double kd_orient = 0.01;
+
+//         Eigen::Vector3d orient_cmd = kp_orient * orient_error;
+
+//         // Add to wrist joints only (4, 5, 6) — not full arm
+//         for (int i = 4; i < m_number_joints; ++i) {
+//             tau_posture(i) += J_rot.col(i).dot(orient_cmd)
+//                             - kd_orient * m_current_velocities(i);
+//         }
+//     }
+
+//     // Additional asymmetric bias for joint_5 (index 6)
+//     // Prevent rotation into wall — stronger push away from wall side
+//     addJoint5WallAvoidance(tau_posture);
+
+//     return tau_posture;
+// }
 
 }  // namespace cartesian_controller_base

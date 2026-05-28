@@ -145,7 +145,7 @@ void IKSolver::synchronizeJointPositions(
 
     // correct large drifts in virtual model to reduce velocity noise from integration
     double virtual_drift = q_real - m_current_positions(i);
-    if (std::abs(virtual_drift) > 0.03) { //  drift threshold: 0.05rad = 50mrad 
+    if (std::abs(virtual_drift) > 0.02) { //  drift threshold: 0.05rad = 50mrad 
       double correction = 0.02 * period.seconds(); 
       m_current_positions(i) += std::clamp(virtual_drift, -correction, correction);
       RCLCPP_WARN_THROTTLE(m_handle->get_logger(),*m_handle->get_clock(), 1000,
@@ -220,36 +220,101 @@ void IKSolver::updateKinematics()
   m_end_effector_vel[5] = vel.deriv().rot.z();
 }
 
+// void IKSolver::applyJointLimits()
+// {
+//   for (int i = 0; i < m_number_joints; ++i)
+//   {
+//     if (std::isnan(m_lower_pos_limits(i)) || std::isnan(m_upper_pos_limits(i)))
+//     {
+//       // Joint marked as continuous.
+//       continue;
+//     }
+//     m_current_positions(i) =
+//       std::clamp(m_current_positions(i), m_lower_pos_limits(i), m_upper_pos_limits(i));
+//   }
+// }
+
 void IKSolver::applyJointLimits()
 {
-  for (int i = 0; i < m_number_joints; ++i)
-  {
-    if (std::isnan(m_lower_pos_limits(i)) || std::isnan(m_upper_pos_limits(i)))
-    {
-      // Joint marked as continuous.
-      continue;
+    for (int i = 0; i < m_number_joints; ++i) {
+        if (std::isnan(m_lower_pos_limits(i)) ||
+            std::isnan(m_upper_pos_limits(i))) continue;
+
+        // For joint_4 — detect if flip is about to occur
+        // by checking if position crossed the flip threshold
+        if (i == 1) {
+            double q_prev = m_last_positions(i);
+            double q_curr = m_current_positions(i);
+
+            // Detect large jump indicating flip
+            double dq = q_curr - q_prev;
+            if (std::abs(dq) > 0.5) {  // >0.5 rad in one cycle = flip
+                RCLCPP_WARN(m_handle->get_logger(),
+                    "Joint_4 flip detected! dq=%.3f — reverting", dq);
+                // Revert to previous position
+                m_current_positions(i) = q_prev;
+                m_current_velocities(i) = 0.0;  // kill velocity
+            }
+        }
+
+        m_current_positions(i) = std::clamp(
+            m_current_positions(i),
+            m_lower_pos_limits(i),
+            m_upper_pos_limits(i));
     }
-    m_current_positions(i) =
-      std::clamp(m_current_positions(i), m_lower_pos_limits(i), m_upper_pos_limits(i));
-  }
 }
 
 void IKSolver::applyVelLimits()
 {
-  for (int i = 0; i < m_number_joints; ++i)
-  {
-    double vel = m_current_velocities(i);
-    // apply deadband to prevent integral drift
-    if (std::abs(vel) < m_vel_deadband) {
-      vel = 0.0;
-    } else {
-      // subtract deadband to prevent jump when coming out of deadband
-      vel = (vel > 0) ? (vel - m_vel_deadband) : (vel + m_vel_deadband);
+  // check if time to collision is decreasing
+  bool ttc_decreasing = (last_min_ttc_ - min_ttc_) > 0.01; // ttc noise
+
+    for (int i = 0; i < m_number_joints; ++i)
+    {
+        double vel   = m_current_velocities(i);
+        double limit = m_vel_limits(i);
+
+        // Consider joint_0, joint_2 and joint_3, which rotation sweeps joint_4 motor through arc into wall 
+        // if (i == 1 || i == 3 || i == 4) {
+        if (ttc_decreasing && safety_factor_ > 0.0) {
+          vel *= (1.0 - (safety_factor_)); // max 50% q_dot reduction per cycle
+          limit = (1.0 - safety_factor_) * m_vel_limits(i);  // linear
+          // limit = (1.0 - (safety_factor * safety_factor)); // quadratic
+          // RCLCPP_WARN(m_handle->get_logger(),
+          //     // *m_handle->get_clock(), 200,
+          //     "Joint %d: min clearance: %.3fm, min ttc: %.3fs, limit: %.4f (safety_factor: %.4f)",
+          //     i, collision_clearance_, min_ttc_, limit, safety_factor_);
+          }
+        // }
+        // Standard deadband
+        if (std::abs(vel) < m_vel_deadband) {
+            vel = 0.0;
+        } 
+        else {
+            vel = (vel > 0) ? (vel - m_vel_deadband)
+                            : (vel + m_vel_deadband);
+        }
+        m_current_velocities(i) = std::clamp(vel, -limit, limit);
     }
-    // apply hard limit clamps
-    m_current_velocities(i) = std::clamp(vel, -m_vel_limits(i), m_vel_limits(i));
-  }
+  last_min_ttc_ = min_ttc_;
 }
+
+// void IKSolver::applyVelLimits()
+// {
+//   for (int i = 0; i < m_number_joints; ++i)
+//   {
+//     double vel = m_current_velocities(i);
+//     // apply deadband to prevent integral drift
+//     if (std::abs(vel) < m_vel_deadband) {
+//       vel = 0.0;
+//     } else {
+//       // subtract deadband to prevent jump when coming out of deadband
+//       vel = (vel > 0) ? (vel - m_vel_deadband) : (vel + m_vel_deadband);
+//     }
+//     // apply hard limit clamps
+//     m_current_velocities(i) = std::clamp(vel, -m_vel_limits(i), m_vel_limits(i));
+//   }
+// }
 
 void IKSolver::filterVel()
 {

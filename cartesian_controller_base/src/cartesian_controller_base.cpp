@@ -242,7 +242,8 @@ CartesianControllerBase::on_configure(const rclcpp_lifecycle::State & previous_s
   m_iterations = get_node()->get_parameter("solver.iterations").as_int();
   m_error_scale = get_node()->get_parameter("solver.error_scale").as_double();
   double k_vq_ns = get_node()->get_parameter("redundant_ns.trans_x.p").as_double();
-  m_ik_solver->setNsDampingGain(k_vq_ns); // applies only to ForwardDynamicsSolver
+  // set parameters (only applies to ForwardDynamicsSolver)
+  m_ik_solver->setNsDampingGain(k_vq_ns);  
 
   // Initialize gains k_vq for nullspace dissipation forces for redundant manipulator
   // F_rs = k_vq * x_dot according to (Khatib 1987) https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=1087068
@@ -369,6 +370,95 @@ CartesianControllerBase::on_shutdown(const rclcpp_lifecycle::State & previous_st
   return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::SUCCESS;
 }
 
+// placeholder for now... manually set based on urdf because meshes are used
+// std::vector<LinkCapsule> CartesianControllerBase::extractCollisionCapsules(
+//     const urdf::Model& robot_model,
+//     const KDL::Chain& chain)
+// {
+//     std::vector<LinkCapsule> capsules;
+
+//     for (size_t i = 0; i < chain.segments.size(); ++i) {
+//         std::string link_name = chain.segments[i].getName();
+//         auto link = robot_model.getLink(link_name);
+
+//         if (!link || !link->collision || !link->collision->geometry) continue;
+
+//         IKSolver::LinkCapsule capsule;
+//         capsule.link_name = link_name;
+
+//         const auto& origin = link->collision->origin;
+//         Eigen::Vector3d offset(
+//             origin.position.x,
+//             origin.position.y,
+//             origin.position.z);
+
+//         double r, p, y;
+//         origin.rotation.getRPY(r, p, y);
+//         Eigen::Matrix3d rot =
+//             (Eigen::AngleAxisd(y, Eigen::Vector3d::UnitZ()) *
+//              Eigen::AngleAxisd(p, Eigen::Vector3d::UnitY()) *
+//              Eigen::AngleAxisd(r, Eigen::Vector3d::UnitX()))
+//             .toRotationMatrix();
+
+//         auto geom = link->collision->geometry;
+
+//         if (geom->type == urdf::Geometry::CYLINDER) {
+//             auto cyl = std::dynamic_pointer_cast<urdf::Cylinder>(geom);
+//             Eigen::Vector3d axis = rot * Eigen::Vector3d::UnitZ();
+//             double half = cyl->length / 2.0;
+//             capsule.p_a    = offset + axis * half;
+//             capsule.p_b    = offset - axis * half;
+//             capsule.radius = cyl->radius;
+//             capsule.valid  = true;
+
+//         } else if (geom->type == urdf::Geometry::SPHERE) {
+//             auto sph = std::dynamic_pointer_cast<urdf::Sphere>(geom);
+//             capsule.p_a    = offset;
+//             capsule.p_b    = offset;
+//             capsule.radius = sph->radius;
+//             capsule.valid  = true;
+
+//         } else if (geom->type == urdf::Geometry::BOX) {
+//             auto box = std::dynamic_pointer_cast<urdf::Box>(geom);
+//             double dx = box->dim.x, dy = box->dim.y, dz = box->dim.z;
+//             Eigen::Vector3d axis;
+//             double half;
+//             if (dx >= dy && dx >= dz) {
+//                 axis = rot * Eigen::Vector3d::UnitX();
+//                 half = dx / 2.0;
+//                 capsule.radius = std::max(dy, dz) / 2.0;
+//             } else if (dy >= dz) {
+//                 axis = rot * Eigen::Vector3d::UnitY();
+//                 half = dy / 2.0;
+//                 capsule.radius = std::max(dx, dz) / 2.0;
+//             } else {
+//                 axis = rot * Eigen::Vector3d::UnitZ();
+//                 half = dz / 2.0;
+//                 capsule.radius = std::max(dx, dy) / 2.0;
+//             }
+//             capsule.p_a   = offset + axis * half;
+//             capsule.p_b   = offset - axis * half;
+//             capsule.valid = true;
+
+//         } else if (geom->type == urdf::Geometry::MESH) {
+//             // Conservative sphere fallback for mesh geometry
+//             capsule.p_a    = offset;
+//             capsule.p_b    = offset;
+//             capsule.radius = 0.06;
+//             capsule.valid  = true;
+//         }
+
+//         if (capsule.valid) {
+//             capsules.push_back(capsule);
+//         }
+//     }
+
+//     RCLCPP_INFO(get_node()->get_logger(),
+//         "Extracted %zu collision capsules from URDF", capsules.size());
+
+//     return capsules;
+// }
+
 void CartesianControllerBase::writeJointControlCmds()
 {
   if (m_publish_state_fb)
@@ -404,14 +494,14 @@ void CartesianControllerBase::writeJointControlCmds()
     {
       for (size_t i = 0; i < m_joint_names.size(); ++i)
       {
-        m_joint_cmd_pos_handles[i].get().set_value(m_simulated_joint_motion.positions[i]);
+        (void)m_joint_cmd_pos_handles[i].get().set_value(m_simulated_joint_motion.positions[i]);
       }
     }
     if (type == hardware_interface::HW_IF_VELOCITY)
     {
       for (size_t i = 0; i < m_joint_names.size(); ++i)
       {
-        m_joint_cmd_vel_handles[i].get().set_value(m_simulated_joint_motion.velocities[i]);
+        (void)m_joint_cmd_vel_handles[i].get().set_value(m_simulated_joint_motion.velocities[i]);
       }
     }
   }
@@ -422,6 +512,28 @@ ctrl::Vector6D CartesianControllerBase::applyPDGains(const std::string & key,
   // PD controlled system input with x_dot damping
   ctrl::Vector6D x_dot = m_ik_solver->getEndEffectorVel();
   ctrl::Vector6D command = m_spatial_controller(key, error, x_dot);
+  return command;
+}
+
+ctrl::Vector6D CartesianControllerBase::applyPDGains(const std::string & key,
+                                                     const ctrl::Vector6D & error, const ContactState contact_state)
+{
+  // PD controlled system input with x_dot damping
+  ctrl::Vector6D x_dot = m_ik_solver->getEndEffectorVel();
+  // double kd_scale = (contact_state == ContactState::CONTACT) ? 1.0 : 0.0;
+  double kd_scale = 0.0;
+  switch (contact_state) {
+    case ContactState::FREE:
+      kd_scale = 0.0; // no force damping when in free motion
+      break;
+    case ContactState::CONTACT:
+      kd_scale = 1.0; // normal force damping during painting
+      break;
+    case ContactState::IMPACT:
+      kd_scale = 2.0; // extra force damping during impact to kill bounce
+      break;
+  }
+  ctrl::Vector6D command = m_spatial_controller(key, error, kd_scale * x_dot);
   return command;
 }
 
@@ -580,7 +692,6 @@ void CartesianControllerBase::publishStateFeedback()
 
     m_feedback_twist_publisher->unlockAndPublish();
   }
-
   // End-effector 
 }
 

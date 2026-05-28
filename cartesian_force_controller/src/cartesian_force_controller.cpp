@@ -46,6 +46,8 @@
 
 namespace cartesian_force_controller
 {
+using cartesian_controller_base::ContactState;
+
 CartesianForceController::CartesianForceController()
 : Base::CartesianControllerBase(), m_hand_frame_control(false)
 {
@@ -114,6 +116,7 @@ CartesianForceController::on_configure(const rclcpp_lifecycle::State & previous_
   // m_target_wrench.setZero();
   // m_ft_sensor_wrench.setZero();
   m_hand_frame_control = get_node()->get_parameter("hand_frame_control").as_bool();
+  m_contact_state = ContactState::FREE;
 
   // Controller-internal state publishing
   m_target_wrench_pub = 
@@ -163,8 +166,9 @@ controller_interface::return_type CartesianForceController::update(const rclcpp:
   auto internal_period = rclcpp::Duration::from_seconds(0.02);
   // Compute the net force
   computeForceError();
+  updateContactState();
   // apply PD gains: F_force = K_p * (f_d - f) - D_f * x_dot
-  ctrl::Vector6D command = Base::applyPDGains(m_gain_key, m_wrench_error);
+  ctrl::Vector6D command = Base::applyPDGains(m_gain_key, m_wrench_error, m_contact_state);
   // Turn Cartesian error into joint motion
   Base::computeJointControlCmds(command, internal_period);
   // Write final commands to the hardware interface
@@ -179,31 +183,33 @@ ctrl::Vector6D CartesianForceController::computeForceError()
   if (m_transform_update_counter ++ >= m_transform_update_cycle) {
     m_transform_update_counter = 0;
     m_wrench_base_rot = Base::rotationToBase(m_new_ft_sensor_ref);
-  }
-  
+  }  
   const auto target_wrench = *m_target_wrench_buffer.readFromRT();
-  if (m_hand_frame_control)  // subscribed wrench is commanded in end-effector frame
-  {
-    // m_target_wrench_base = Base::displayInBaseLink(target_wrench, Base::m_end_effector_link);
+  const auto current_wrench = *m_ft_sensor_wrench_buffer.readFromRT();
+
+  if (m_hand_frame_control) { // subscribed wrench is commanded in end-effector frame
     m_target_wrench_base = m_wrench_base_rot * target_wrench; // assume target_wrench is given in the same frame as the transformed wrench reading
-  }
-  else  // subscribed wrench is already in base frame
-  {
+  } else { // subscribed wrench is already in base frame
     m_target_wrench_base = target_wrench;
   }
-
-  const auto current_wrench = *m_ft_sensor_wrench_buffer.readFromRT();
   // m_sensor_wrench_base = Base::displayInBaseLink(current_wrench, m_new_ft_sensor_ref);
   m_sensor_wrench_base = m_wrench_base_rot * current_wrench; 
   // Superimpose target wrench and sensor wrench in base frame
   m_wrench_error_kdl = m_sensor_wrench_base + m_target_wrench_base;
-  // RCLCPP_INFO(get_node()->get_logger(), "sensor_wrench transformed: %f %f %f %f %f %f", sensor_wrench(0), sensor_wrench(1), sensor_wrench(2), sensor_wrench(3), sensor_wrench(4), sensor_wrench(5));
-  // return Base::displayInBaseLink(m_ft_sensor_wrench, m_new_ft_sensor_ref) + target_wrench;
+
+  // apply deadband
+  const double force_deadband = 0.5; // N
+  const double torque_deadband = 0.05; // Nm
 
   for (int i=0; i < 6; ++i){
+    double threshold = (i < 3) ? force_deadband : torque_deadband;
+    if (std::abs(m_wrench_error_kdl(i)) < threshold) {
+      m_wrench_error_kdl(i) = 0.0;
+    } else {
+      m_wrench_error_kdl(i) -= std::copysign(threshold, m_wrench_error_kdl(i));
+    }
     m_wrench_error[i] = m_wrench_error_kdl(i);
   }
-
   return m_wrench_error;
 }
 
@@ -286,6 +292,97 @@ void CartesianForceController::ftSensorWrenchCallback(
 
   // TODO: m_gravity_compensated_wrench = transformed_wrench - tool_gravity_wrench; // subtract weight of tool after transformation not before. but apply tare before transformation!
   m_ft_sensor_wrench_buffer.writeFromNonRT(tmp);
+}
+
+void CartesianForceController::updateContactState() {
+  // get current force into wall
+  double force_magnitude = m_sensor_wrench_base.force.Norm();
+  double force_target = m_target_wrench_base.force.Norm();
+  rclcpp::Time now = get_node()->get_clock()->now();
+
+  // use fixed min threshold when target force is small/zero
+  const double min_contact_threshold = 8.0;
+  double contact_threshold = std::max(force_target * 1.25, min_contact_threshold);
+  double release_threshold = std::max(force_target * 0.2, 1.0);
+
+  // force target boundaries 
+  double target_upper = force_target * 1.3;
+  double target_lower = force_target * 0.7;
+  bool force_check = (force_magnitude >= target_lower) && (force_magnitude <= target_upper);
+
+  switch (m_contact_state) {
+    case ContactState::FREE:
+      if (force_magnitude >= contact_threshold) {
+          // impact detected, switch state immediately
+          m_contact_state = ContactState::IMPACT;
+          m_impact_timer = now;
+          RCLCPP_INFO_THROTTLE(get_node()->get_logger(), *get_node()->get_clock(), 500,
+            "Contact established: %.3fN (threshold: %.3fN). Additional force damping enabled", 
+            force_magnitude, contact_threshold);
+      }
+      break;
+      
+    case ContactState::CONTACT:
+      // switch to impact state if force spikes
+      // if (force_magnitude > force_target * 1.7) {
+      //   m_contact_state = ContactState::IMPACT;
+      //   m_impact_timer = now;
+      //   RCLCPP_INFO_THROTTLE(get_node()->get_logger(), *get_node()->get_clock(), 500,
+      //     "Force spike: %.3fN. Additional damping for impact enabled", force_magnitude);
+      // }
+      // contactCheck(force_magnitude, release_threshold, now);
+      break;
+
+    case ContactState::IMPACT:
+    {
+      // switch to contact mode when force settles or after timeout duration
+      double impact_duration = (now - m_impact_timer).seconds();
+      bool impact_timeout = impact_duration > m_max_impact_duration;
+
+      if (impact_timeout) {
+        m_contact_state = ContactState::CONTACT;
+        m_settle_timer_running = false;
+        m_release_timer_running = false;
+        RCLCPP_INFO_THROTTLE(get_node()->get_logger(), *get_node()->get_clock(), 500,
+          "Impact timeout: %.3fs. Current force: %.3fN  Normal force damping enabled", 
+          impact_duration, force_magnitude);
+      } else if (force_check) {
+        // force within limits, start or check settle timer
+        if (!m_settle_timer_running) {
+          m_settle_timer = now;
+          m_settle_timer_running = true;
+        } else if ((now - m_settle_timer).seconds() > m_min_settle_duration) {
+          // sustained force state, transition to CONTACT
+          m_contact_state = ContactState::CONTACT;
+          m_settle_timer_running = false;
+          m_release_timer_running = false;
+          RCLCPP_INFO_THROTTLE(get_node()->get_logger(), *get_node()->get_clock(), 500,
+            "Stable contact established: %.3fN in %.3fs. Normal force damping enabled", 
+            force_magnitude, impact_duration);
+        }
+      } else {
+        m_settle_timer_running = false;
+      }
+      // contactCheck(force_magnitude, release_threshold, now);
+      break;
+    }
+  }
+}
+
+void CartesianForceController::contactCheck(double force_magnitude, double release_threshold, const rclcpp::Time& now) {
+  // use hysteresis, lower threshold to release than to engage
+  if (force_magnitude < release_threshold) {
+    if (!m_release_timer_running) {
+      m_release_timer = now;
+      m_release_timer_running = true;
+    } else if ((now - m_release_timer).seconds() > m_release_contact_duration) {
+      m_contact_state = ContactState::FREE;
+      m_release_timer_running = false;
+      RCLCPP_INFO_THROTTLE(get_node()->get_logger(), *get_node()->get_clock(), 500, "Contact lost: %.3fN. Force damping disabled", force_magnitude);
+    }
+  } else {
+    m_release_timer_running = false;
+  }
 }
 
 void CartesianForceController::publishWrenches(const rclcpp::Time& time) {

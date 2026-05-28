@@ -66,7 +66,7 @@ SelectivelyDampedLeastSquaresSolver::SelectivelyDampedLeastSquaresSolver() {}
 SelectivelyDampedLeastSquaresSolver::~SelectivelyDampedLeastSquaresSolver() {}
 
 trajectory_msgs::msg::JointTrajectoryPoint SelectivelyDampedLeastSquaresSolver::getJointControlCmds(
-  rclcpp::Duration period, const ctrl::Vector6D & net_force)
+  const rclcpp::Duration & period, const ctrl::Vector6D & net_force)
 {
   // Compute joint Jacobian
   m_jnt_jacobian_solver->JntToJac(m_current_positions, m_jnt_jacobian);
