@@ -188,8 +188,8 @@ ctrl::Vector6D CartesianMotionController::computeMotionError(const KDL::Frame& t
   // deadband parameters
   const double dist_deadband = 0.0005;      // 1mm (absolute zero)
   const double dist_width = 0.004;    // 5mm (fade out zone)
-  const double rot_deadband  = 0.005;       // ~0.57 degrees
-  const double rot_width = 0.015;     // ~1.1 degrees
+  const double rot_deadband  = 0.035;       // ~2 degrees
+  const double rot_width = 0.09;     // ~5.15 degrees
 
   // Clamp maximal tolerated error.
   // The remaining error will be handled in the next control cycle.
@@ -198,8 +198,6 @@ ctrl::Vector6D CartesianMotionController::computeMotionError(const KDL::Frame& t
   // wrench.
   const double max_distance = 0.1;
   const double max_angle = 0.1;
-
-  // ctrl::Vector6D raw_x_ddot = (x_dot - m_last_x_dot) / dt;
 
   // apply deadband to x and y linear axis
   for (int i = 0; i < 3; ++i){
