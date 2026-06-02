@@ -144,6 +144,7 @@ controller_interface::return_type CartesianComplianceController::update(
 {
 
   const auto active_target = *m_target_frame_buffer.readFromRT();
+
   // Synchronize the internal model and the real robot
   Base::m_ik_solver->synchronizeJointPositions(Base::m_joint_state_pos_handles, period);
 
@@ -156,7 +157,7 @@ controller_interface::return_type CartesianComplianceController::update(
     auto internal_period = rclcpp::Duration::from_seconds(0.005);
 
     // Compute the net force
-    ctrl::Vector6D net_command = computeComplianceError(active_target);
+    ctrl::Vector6D net_command = computeComplianceError(active_target, internal_period);
 
     // Turn Cartesian error into joint motion
     Base::computeJointControlCmds(net_command, internal_period);
@@ -172,11 +173,11 @@ controller_interface::return_type CartesianComplianceController::update(
   return controller_interface::return_type::OK;
 }
 
-ctrl::Vector6D CartesianComplianceController::computeComplianceError(const KDL::Frame& active_target)
+ctrl::Vector6D CartesianComplianceController::computeComplianceError(const KDL::Frame& active_target, const rclcpp::Duration & period)
 {
   // std::lock_guard<std::mutex> lock(m_param_mutex);
 
-  MotionBase::computeMotionError(active_target);
+  MotionBase::computeMotionError(active_target, period);
   ctrl::Vector6D motion_command = Base::applyPDGains(MotionBase::m_gain_key, m_motion_error);
 
   // RCLCPP_INFO(get_node()->get_logger(), "spring force error: %f %f %f %f %f %f", net_force(0), net_force(1), net_force(2), net_force(3), net_force(4), net_force(5));
@@ -193,19 +194,19 @@ ctrl::Vector6D CartesianComplianceController::computeComplianceError(const KDL::
   // RCLCPP_INFO(get_node()->get_logger(), "net force error: %f %f %f %f %f %f", net_force(0), net_force(1), net_force(2), net_force(3), net_force(4), net_force(5));
 
   // apply force deadband
-  double f_threshold = 0.005; // N        based from simulation data noise tolerance 0.15-0.2N * K_pf gain (0.001)
-  double t_threshold = 0.005; // Nm
+  // double f_threshold = 0.005; // N        based from simulation data noise tolerance 0.15-0.2N * K_pf gain (0.001)
+  // double t_threshold = 0.005; // Nm
   
-  for (int i = 0; i < 6; ++i) {
-    double limit = (i < 3) ? f_threshold : t_threshold;
+  // for (int i = 0; i < 6; ++i) {
+  //   double limit = (i < 3) ? f_threshold : t_threshold;
 
-    if (std::abs(net_force[i]) < limit) {
-      net_force[i] = 0.0;
-    } else {
-      // deadband ramp
-      net_force[i] -= std::copysign(limit, net_force[i]);
-    }
-  }
+  //   if (std::abs(net_force[i]) < limit) {
+  //     net_force[i] = 0.0;
+  //   } else {
+  //     // deadband ramp
+  //     net_force[i] -= std::copysign(limit, net_force[i]);
+  //   }
+  // }
 
   return net_force;
 }

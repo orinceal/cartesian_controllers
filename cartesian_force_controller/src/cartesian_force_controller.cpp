@@ -198,7 +198,7 @@ ctrl::Vector6D CartesianForceController::computeForceError()
   m_wrench_error_kdl = m_sensor_wrench_base + m_target_wrench_base;
 
   // apply deadband
-  const double force_deadband = 0.5; // N
+  const double force_deadband = 0.2; // N
   const double torque_deadband = 0.05; // Nm
 
   for (int i=0; i < 6; ++i){

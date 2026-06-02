@@ -100,7 +100,7 @@ private:
      *
      * @return The remaining error wrench, given in robot base frame
      */
-  ctrl::Vector6D computeComplianceError(const KDL::Frame & active_target);
+  ctrl::Vector6D computeComplianceError(const KDL::Frame & active_target, const rclcpp::Duration & period);
   // void calculateCriticalDamping(double zeta = 1.0);
   
   // parameter callback 

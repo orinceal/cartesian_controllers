@@ -105,7 +105,7 @@ protected:
      *
      * @return The error as a 6-dim vector (linear, angular) w.r.t to the robot base link
      */
-  ctrl::Vector6D computeMotionError(const KDL::Frame& target_frame);
+  ctrl::Vector6D computeMotionError(const KDL::Frame& target_frame, const rclcpp::Duration & period);
   /**
      * @brief Publish the controller's end-effector position and rotation errors
      *
@@ -128,15 +128,16 @@ protected:
   // for ROS2 introspection / plotting
   ctrl::Vector6D m_motion_error; // error after deadband clamping
   KDL::Vector m_pos_error_raw;
-  KDL::Rotation m_rot_error_raw;
+  KDL::Vector m_rot_error_raw;
   KDL::Frame m_target_frame;
   // std::mutex m_target_mutex;
   std::string m_gain_key = "motion";
   
 private:
-  KDL::Frame filterTarget(const KDL::Frame & target_raw);
+  KDL::Frame filterTarget(const KDL::Frame & target_raw, const rclcpp::Duration & period);
   bool first_target_{true};
   KDL::Frame filtered_target_frame_;
+  double m_approach_vel_{0.0};
 };
 
 }  // namespace cartesian_motion_controller

@@ -213,7 +213,7 @@ protected:
 
   // Internal buffers
   KDL::JntArray m_current_positions;  // virtual model joint positions
-  KDL::JntArray m_real_positions;  // actual hardware positions
+  KDL::JntArray m_ema_positions;  // actual hardware positions
   KDL::JntArray m_current_velocities;
   KDL::JntArray m_filt_velocities;
   KDL::JntArray m_current_accelerations;
@@ -228,7 +228,9 @@ protected:
   KDL::JntArray m_accel_limits;
   const double m_vel_deadband = 0.0004;
   const double m_accel_deadband = 0.003;
-  const double m_vel_filter_cutoff = 5.0; // Hz 
+  bool m_vel_limits_on{false};
+  bool m_vel_deadband_on{false};
+  const double m_vel_filter_cutoff = 20.0; // Hz 
   double collision_clearance_{1.0};
   double min_ttc_{std::numeric_limits<double>::max()};
   double last_min_ttc_{std::numeric_limits<double>::max()};

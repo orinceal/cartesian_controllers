@@ -102,6 +102,7 @@ CartesianControllerBase::on_init()
     auto_declare<int>("solver.iterations", 1);
     auto_declare<bool>("solver.publish_state_feedback", false);
     auto_declare<bool>("solver.velocity_limits_on", false);
+    auto_declare<bool>("solver.vel_deadband_on", false);
     auto_declare<bool>("solver.acceleration_limits_on", false);
     auto_declare<double>("redundant_ns.trans_x.p", 0.0);
     auto_declare<double>("robot_description_planning.default_velocity_scaling_factor", 1.0);    

@@ -146,6 +146,7 @@ trajectory_msgs::msg::JointTrajectoryPoint ForwardDynamicsSolver::getJointContro
   //applyAccelLimits();
   // Numerical time integration with the Euler forward method
   m_current_velocities.data = m_last_velocities.data + m_current_accelerations.data * period.seconds();
+  m_last_velocities = m_current_velocities; // save pre-deadband for next integration
 
   // Apply q_dot limits and additional damping if necessary                                     
   applyVelLimits();
@@ -170,7 +171,7 @@ trajectory_msgs::msg::JointTrajectoryPoint ForwardDynamicsSolver::getJointContro
 
   // Update for the next cycle
   m_last_positions = m_current_positions;
-  m_last_velocities = m_current_velocities;
+  // m_last_velocities = m_current_velocities;
 
   return control_cmd;
 }
@@ -271,7 +272,7 @@ bool ForwardDynamicsSolver::buildGenericModel()
     else if (m_chain.segments[i].getJoint().getType() == KDL::Joint::TransAxis) {
       // set higher mass for slider joint
       m_chain.segments[i].setInertia(
-      KDL::RigidBodyInertia(0.5, KDL::Vector::Zero(), KDL::RotationalInertia(0.5, 0,5, 0.5)));
+      KDL::RigidBodyInertia(0.01, KDL::Vector::Zero(), KDL::RotationalInertia(0.01, 0.01, 0.01)));
       jnt_seg_idx.at(j) = i;
       j++;
     } 
@@ -322,12 +323,32 @@ void ForwardDynamicsSolver::wallPtCallback(const geometry_msgs::msg::Pose::Share
   
   Eigen::Quaterniond q(msg->orientation.w, msg->orientation.x, msg->orientation.y, msg->orientation.z);
 
-  wall_normal_ = q * Eigen::Vector3d::UnitX();
+  wall_normal_ = q * Eigen::Vector3d::UnitX(); // normal points out of wall. Defined as UnitX() col0 of rotation matrix in WallTrajectory
   wall_normal_.normalize();
 
   RCLCPP_INFO(get_logger(), "wall info received. Point on wall: [%f, %f, %f], Normal: [%f, %f, %f]", wall_point_.x(), wall_point_.y(), wall_point_.z(), wall_normal_.x(), wall_normal_.y(), wall_normal_.z());
 
   initializeCapsuleClearances();
+
+  // detect normal angle change (for corners)
+  // // Detect corner: angle between new and existing normal exceeds threshold
+  // double cos_angle = wall_normal_.dot(new_normal);
+  // bool is_corner = (cos_angle < std::cos(corner_angle_threshold_rad_)); // e.g. 30°
+
+  // if (is_corner && wall_normal_.norm() > 0.1) {
+  //   // Store second wall normal
+  //   secondary_wall_normal_ = new_normal;
+  //   in_corner_ = true;
+  //   RCLCPP_INFO(get_logger(), "Corner detected! Angle: %.1f deg",
+  //               std::acos(cos_angle) * 180.0 / M_PI);
+  // } else {
+  //   // Normal flat wall update
+  //   wall_normal_ = new_normal;
+  //   wall_point_.x() = msg->position.x;
+  //   wall_point_.y() = msg->position.y;
+  //   wall_point_.z() = msg->position.z;
+  //   in_corner_ = false;
+  // }
 }
 
 void ForwardDynamicsSolver::initializeCapsuleClearances()
