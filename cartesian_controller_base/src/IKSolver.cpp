@@ -283,13 +283,13 @@ void IKSolver::applyVelLimits()
 {
   // Per-joint deadbands matching physical units
   const std::array<double, 7> joint_deadbands = {
-      0.00005,   // Slider_18    (m/s)  — linear, lower deadband
-      0.0005,   // robco_joint_0 (rad/s)
-      0.0005,   // robco_joint_1
-      0.0005,   // robco_joint_2
-      0.0005,   // robco_joint_3
-      0.0005,   // robco_joint_4 — lower stiffness, more noise
-      0.001   // robco_joint_5 — lowest stiffness, most noise
+      0.00004,   // Slider_18    (m/s)  — linear, lower deadband
+      0.0004,   // robco_joint_0 (rad/s)
+      0.0004,   // robco_joint_1
+      0.0004,   // robco_joint_2
+      0.0004,   // robco_joint_3
+      0.0004,   // robco_joint_4 — lower stiffness, more noise
+      0.0004   // robco_joint_5 — lowest stiffness, most noise
   };
 
   // check if time to collision is decreasing
