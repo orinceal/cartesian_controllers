@@ -117,6 +117,7 @@ CartesianMotionController::on_activate(const rclcpp_lifecycle::State & previous_
 
   // reset buffer and filter state to start where we are
   first_target_ = true;
+  // m_error_filter_init_ = false;
   m_approach_vel_ = 0.0;
   m_target_frame_buffer.initRT(Base::m_ik_solver->getEndEffectorPose());
 
@@ -186,10 +187,10 @@ ctrl::Vector6D CartesianMotionController::computeMotionError(const KDL::Frame& t
   // m_rot_error_raw = rot_err;
 
   // deadband parameters
-  const double dist_deadband = 0.0005;      // 1mm (absolute zero)
+  const double dist_deadband = 0.001;      // 1mm (absolute zero)
   const double dist_width = 0.004;    // 5mm (fade out zone)
-  const double rot_deadband  = 0.035;       // ~2 degrees
-  const double rot_width = 0.09;     // ~5.15 degrees
+  const double rot_deadband  = 0.02; // 0.035;       // ~2 degrees
+  const double rot_width = 0.07; // 0.09;     // ~5.15 degrees
 
   // Clamp maximal tolerated error.
   // The remaining error will be handled in the next control cycle.
@@ -199,9 +200,20 @@ ctrl::Vector6D CartesianMotionController::computeMotionError(const KDL::Frame& t
   const double max_distance = 0.1;
   const double max_angle = 0.1;
 
+  // apply EMA 
+  // const double pos_err_alpha = 0.3;
+  // if (!m_error_filter_init_) {
+  //   m_filt_pos_err_ = pos_err;
+  //   m_error_filter_init_ = true;
+  // } else {
+  //   for (int i = 0; i < 3; ++i)
+  //     m_filt_pos_err_(i) = (1.0 - pos_err_alpha) * m_filt_pos_err_(i) + pos_err_alpha * pos_err(i);
+  // }
+
   // apply deadband to x and y linear axis
   for (int i = 0; i < 3; ++i){
     double d = std::abs(pos_err(i));
+    // double d = std::abs(m_filt_pos_err_(i));
     // if (d <= dist_deadband) {
     //   m_motion_error(i) = 0.0;
     // } 
@@ -306,7 +318,7 @@ KDL::Frame CartesianMotionController::filterTarget(const KDL::Frame & target_raw
 
   // max approach rates
   const double max_vel = 0.2; // m/s
-  const double max_accel = 0.2; // m/s2
+  const double max_accel = 0.3; // m/s2
   // const double max_angular_vel = 0.15; // rad/s
 
   // linear: move at constant rate toward target (ramp profile)

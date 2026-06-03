@@ -196,11 +196,8 @@ CartesianControllerBase::on_configure(const rclcpp_lifecycle::State & previous_s
   KDL::JntArray upper_pos_limits(m_number_joints);
   KDL::JntArray lower_pos_limits(m_number_joints);
   KDL::JntArray vel_limits(m_number_joints);
-  KDL::JntArray accel_limits(m_number_joints);
   m_has_vel_limits = get_node()->get_parameter("solver.velocity_limits_on").as_bool();
   m_vel_scale = get_node()->get_parameter("robot_description_planning.default_velocity_scaling_factor").as_double();
-  m_has_accel_limits = get_node()->get_parameter("solver.acceleration_limits_on").as_bool();
-  m_accel_scale = get_node()->get_parameter("robot_description_planning.default_acceleration_scaling_factor").as_double();
   
   for (size_t i = 0; i < m_number_joints; ++i)
   {
@@ -226,16 +223,11 @@ CartesianControllerBase::on_configure(const rclcpp_lifecycle::State & previous_s
         double limit = get_node()->get_parameter(param_base + ".max_velocity").as_double();
         vel_limits(i) = m_vel_scale * limit;
       }
-      if (m_has_accel_limits) {
-        get_node()->declare_parameter<double>(param_base + ".max_acceleration", 0.1);
-        double limit = get_node()->get_parameter(param_base + ".max_acceleration").as_double();
-        accel_limits(i) = m_accel_scale * limit;
-      }
     }
   }
 
   // Initialize solvers
-  m_ik_solver->init(get_node()->shared_from_this(), m_robot_chain, upper_pos_limits, lower_pos_limits, vel_limits, accel_limits);
+  m_ik_solver->init(get_node()->shared_from_this(), m_robot_chain, upper_pos_limits, lower_pos_limits, vel_limits);
   
   KDL::Tree tmp("not_relevant");
   tmp.addChain(m_robot_chain, "not_relevant");

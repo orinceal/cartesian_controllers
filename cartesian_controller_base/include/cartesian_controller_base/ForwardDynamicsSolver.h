@@ -108,7 +108,7 @@ public:
 
   bool init(std::shared_ptr<rclcpp_lifecycle::LifecycleNode> nh, const KDL::Chain & chain,
             const KDL::JntArray & upper_pos_limits, const KDL::JntArray & lower_pos_limits,
-            const KDL::JntArray & vel_limits, const KDL::JntArray & accel_limits) override;
+            const KDL::JntArray & vel_limits) override;
   void setNsDampingGain(double k_vq_ns) override {m_k_vq_ns = k_vq_ns;}
 private:
   // Build a generic robot model for control

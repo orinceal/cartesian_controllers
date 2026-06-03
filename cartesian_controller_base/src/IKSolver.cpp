@@ -186,7 +186,7 @@ void IKSolver::synchronizeJointPositions(
 
 bool IKSolver::init(std::shared_ptr<rclcpp_lifecycle::LifecycleNode> nh, const KDL::Chain & chain,
                     const KDL::JntArray & upper_pos_limits, const KDL::JntArray & lower_pos_limits,
-                    const KDL::JntArray & vel_limits, const KDL::JntArray & accel_limits)
+                    const KDL::JntArray & vel_limits)
 {
   // Initialize
   m_handle = nh;
@@ -203,7 +203,6 @@ bool IKSolver::init(std::shared_ptr<rclcpp_lifecycle::LifecycleNode> nh, const K
   m_upper_pos_limits = upper_pos_limits;
   m_lower_pos_limits = lower_pos_limits;
   m_vel_limits = vel_limits;
-  m_accel_limits = accel_limits;
   m_vel_limits_on   = nh->get_parameter("solver.velocity_limits_on").as_bool();
   m_vel_deadband_on = nh->get_parameter("solver.vel_deadband_on").as_bool();
 
@@ -363,15 +362,4 @@ void IKSolver::filterVel()
   }
 }
 
-void IKSolver::applyAccelLimits()
-{
-  for (int i = 0; i < m_number_joints; ++i)
-  {
-    m_current_accelerations(i) = 
-      std::clamp(m_current_accelerations(i), -m_accel_limits(i), m_accel_limits(i));
-    // if (std::abs(m_current_accelerations(i)) < m_accel_deadband) {
-    //   m_current_accelerations(i) = 0.0;
-    // }
-  }
-}
 }  // namespace cartesian_controller_base

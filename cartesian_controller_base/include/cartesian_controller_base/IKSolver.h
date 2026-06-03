@@ -152,7 +152,7 @@ public:
 
   virtual bool init(std::shared_ptr<rclcpp_lifecycle::LifecycleNode> nh, const KDL::Chain & chain,
                     const KDL::JntArray & upper_pos_limits, const KDL::JntArray & lower_pos_limits,
-                    const KDL::JntArray & vel_limits = KDL::JntArray(), const KDL::JntArray & accel_limits = KDL::JntArray());
+                    const KDL::JntArray & vel_limits = KDL::JntArray());
 
   /**
      * @brief Update the robot kinematics of the solver
@@ -225,7 +225,6 @@ protected:
   KDL::JntArray m_upper_pos_limits;
   KDL::JntArray m_lower_pos_limits;
   KDL::JntArray m_vel_limits;
-  KDL::JntArray m_accel_limits;
   const double m_vel_deadband = 0.0004;
   const double m_accel_deadband = 0.003;
   bool m_vel_limits_on{false};

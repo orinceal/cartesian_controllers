@@ -105,8 +105,7 @@ trajectory_msgs::msg::JointTrajectoryPoint JacobianTransposeSolver::getJointCont
 bool JacobianTransposeSolver::init(std::shared_ptr<rclcpp_lifecycle::LifecycleNode> nh,
                                    const KDL::Chain & chain, const KDL::JntArray & upper_pos_limits,
                                    const KDL::JntArray & lower_pos_limits, 
-                                   const KDL::JntArray & /*vel_limits*/,
-                                   const KDL::JntArray & /*accel_limits*/)
+                                   const KDL::JntArray & /*vel_limits*/)
 {
   IKSolver::init(nh, chain, upper_pos_limits, lower_pos_limits);
 

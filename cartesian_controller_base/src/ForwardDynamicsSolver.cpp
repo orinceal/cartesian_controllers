@@ -123,9 +123,9 @@ trajectory_msgs::msg::JointTrajectoryPoint ForwardDynamicsSolver::getJointContro
   // Eigen::VectorXd tau_repulse_blend = ns_weight  * tau_repulse_ns + (1 - ns_weight) *  tau_repulse;
 
   // calculate null space damping (tau_s = -k_vq * H(q) * q_dot (see eqns 64 and 65 in https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=1087068))
-  Eigen::VectorXd kvq_diag = Eigen::VectorXd::Constant(m_number_joints, m_k_vq_ns);
-  Eigen::MatrixXd K_vq = kvq_diag.asDiagonal();
-  Eigen::VectorXd tau_s = -K_vq * m_jnt_space_inertia.data * m_last_velocities.data;
+  // Eigen::VectorXd kvq_diag = Eigen::VectorXd::Constant(m_number_joints, m_k_vq_ns);
+  // Eigen::MatrixXd K_vq = kvq_diag.asDiagonal();
+  // Eigen::VectorXd tau_s = -K_vq * m_jnt_space_inertia.data * m_last_velocities.data;
 
   // Khatib formulation
   // Operational space mass matrix: Lambda = (J * H^{-1} * J^T)^{-1} 
@@ -179,10 +179,9 @@ trajectory_msgs::msg::JointTrajectoryPoint ForwardDynamicsSolver::getJointContro
 bool ForwardDynamicsSolver::init(std::shared_ptr<rclcpp_lifecycle::LifecycleNode> nh,
                                  const KDL::Chain & chain, const KDL::JntArray & upper_pos_limits,
                                  const KDL::JntArray & lower_pos_limits,
-                                 const KDL::JntArray & vel_limits,
-                                 const KDL::JntArray & accel_limits)
+                                 const KDL::JntArray & vel_limits)
 {
-  IKSolver::init(nh, chain, upper_pos_limits, lower_pos_limits, vel_limits, accel_limits);
+  IKSolver::init(nh, chain, upper_pos_limits, lower_pos_limits, vel_limits);
 
   if (!buildGenericModel())
   {
@@ -272,7 +271,7 @@ bool ForwardDynamicsSolver::buildGenericModel()
     else if (m_chain.segments[i].getJoint().getType() == KDL::Joint::TransAxis) {
       // set higher mass for slider joint
       m_chain.segments[i].setInertia(
-      KDL::RigidBodyInertia(0.01, KDL::Vector::Zero(), KDL::RotationalInertia(0.01, 0.01, 0.01)));
+      KDL::RigidBodyInertia(0.001, KDL::Vector::Zero(), KDL::RotationalInertia(0.001, 0.001, 0.001)));
       jnt_seg_idx.at(j) = i;
       j++;
     } 
@@ -406,7 +405,7 @@ double ForwardDynamicsSolver::addCollisionRepulsion(Eigen::VectorXd& tau_repulse
   const double clearance_zone = 0.1;     // influence zone
   const double rho = 0.06;
   const double eta = 20.0;   // stiffness coeff
-  const double beta = 0.8; // damping coeff
+  const double beta = 0.6; // damping coeff
   const double d_cap = 0.03; // hard limit
   const double dot_eps = 0.001; // ignore approach speeds below this
   double dt = period.seconds();
@@ -462,8 +461,8 @@ double ForwardDynamicsSolver::addCollisionRepulsion(Eigen::VectorXd& tau_repulse
           m_jnt_jacobian_solver->JntToJac(
               m_current_positions, J_seg, capsule.seg_idx);
           tau_repulse += J_seg.data.topRows(3).transpose() * f_repulse;
-          RCLCPP_INFO_THROTTLE(get_logger(), *m_handle->get_clock(), 500,
-          "clearance_d_min: %.4f, clearance_dot: %.4f, spring_force: %.4f, damping_force: %.4f ", clearance_d_min, clearance_dot, spring_force, damping_force);
+          // RCLCPP_INFO_THROTTLE(get_logger(), *m_handle->get_clock(), 500,
+          // "clearance_d_min: %.4f, clearance_dot: %.4f, spring_force: %.4f, damping_force: %.4f ", clearance_d_min, clearance_dot, spring_force, damping_force);
       } 
 
       capsule.last_d_a = clearance_a;
