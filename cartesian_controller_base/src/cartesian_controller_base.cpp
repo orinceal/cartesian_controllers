@@ -531,7 +531,7 @@ ctrl::Vector6D CartesianControllerBase::applyPDGains(const std::string & key,
       kd_scale = 1.0; // normal force damping during painting
       break;
     case ContactState::IMPACT:
-      kd_scale = 2.0; // extra force damping during impact to kill bounce
+      kd_scale = 3.0; // extra force damping during impact to kill bounce
       break;
   }
   ctrl::Vector6D command = m_spatial_controller(key, error, kd_scale * x_dot);

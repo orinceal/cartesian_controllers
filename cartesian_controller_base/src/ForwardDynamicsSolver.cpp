@@ -93,7 +93,7 @@ trajectory_msgs::msg::JointTrajectoryPoint ForwardDynamicsSolver::getJointContro
 
   // WDLS pseudoinverse for null space projector
   Eigen::VectorXd weights = Eigen::VectorXd::Ones(m_number_joints);
-  // weights(0) = 2.0; // higher weight for slider 
+  // weights(3) = 3.0; // higher weight for slider 
   Eigen::MatrixXd W_inv = weights.cwiseInverse().asDiagonal();
   double lambda =  0.001;
 
@@ -142,8 +142,8 @@ trajectory_msgs::msg::JointTrajectoryPoint ForwardDynamicsSolver::getJointContro
 
   // joint accelerations according to: \f$ \ddot{q} = H^{-1} ( J^T f + B \dot{q}) \f$
   // use Cholesky decomposition (LDLT )instead of inverse to solve for q_ddot 
-  m_current_accelerations.data = m_jnt_space_inertia.data.ldlt().solve(tau_tip_accel); // + tau_s); //+ tau_repulse_ns);
-  //applyAccelLimits();
+  m_current_accelerations.data = m_jnt_space_inertia.data.ldlt().solve(tau_tip_accel + tau_repulse_ns); // + tau_s); //+ tau_repulse_ns);
+
   // Numerical time integration with the Euler forward method
   m_current_velocities.data = m_last_velocities.data + m_current_accelerations.data * period.seconds();
   m_last_velocities = m_current_velocities; // save pre-deadband for next integration
@@ -405,9 +405,9 @@ double ForwardDynamicsSolver::addCollisionRepulsion(Eigen::VectorXd& tau_repulse
 
   const double clearance_zone = 0.1;     // influence zone
   const double rho = 0.06;
-  const double eta = 50.0;   // stiffness coeff
-  const double beta = 20.0; // damping coeff
-  const double d_cap = 0.02; // hard limit
+  const double eta = 20.0;   // stiffness coeff
+  const double beta = 0.8; // damping coeff
+  const double d_cap = 0.03; // hard limit
   const double dot_eps = 0.001; // ignore approach speeds below this
   double dt = period.seconds();
 
@@ -445,16 +445,16 @@ double ForwardDynamicsSolver::addCollisionRepulsion(Eigen::VectorXd& tau_repulse
 
       // repulsion if within influence zone
       if (clearance_d_min < clearance_zone) {
-          // spring term applied on capsule's minimum clearance
+          // spring term applied on capsule's minimum clearance only if lower than rho
           double effective = std::max(clearance_d_min, d_cap);
           // double spring_force = eta * std::pow(rho - effective, 2); // quadratic
           double spring_force = std::max(eta * (rho - effective), 0.0); // linear
-        
-          // double damping_force = (clearance_dot < 0.0) ? -beta * clearance_dot : 0.0; 
+          double fade = std::clamp((clearance_zone - clearance_d_min) / (clearance_zone - rho), 0.0, 1.0);
+          double damping_force = (clearance_dot < 0.0) ? fade * (-beta * clearance_dot) : 0.0; 
           // damping on both positive and negative clearance_dot (moving towards or moving away)
-          double damping_force = -beta * clearance_dot; 
-          // double force_mag = std::max(spring_force + damping_force, 0.0);
-          double force_mag = spring_force + damping_force;
+          // double damping_force = fade * (-beta * clearance_dot); 
+          double force_mag = std::max(spring_force + damping_force, 0.0);
+          //double force_mag = spring_force + damping_force;
           Eigen::Vector3d f_repulse = force_mag * wall_normal_; // positive force away from wall
 
           // Jacobian at this segment
@@ -462,6 +462,8 @@ double ForwardDynamicsSolver::addCollisionRepulsion(Eigen::VectorXd& tau_repulse
           m_jnt_jacobian_solver->JntToJac(
               m_current_positions, J_seg, capsule.seg_idx);
           tau_repulse += J_seg.data.topRows(3).transpose() * f_repulse;
+          RCLCPP_INFO_THROTTLE(get_logger(), *m_handle->get_clock(), 500,
+          "clearance_d_min: %.4f, clearance_dot: %.4f, spring_force: %.4f, damping_force: %.4f ", clearance_d_min, clearance_dot, spring_force, damping_force);
       } 
 
       capsule.last_d_a = clearance_a;

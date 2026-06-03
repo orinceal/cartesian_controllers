@@ -305,7 +305,7 @@ KDL::Frame CartesianMotionController::filterTarget(const KDL::Frame & target_raw
   double dt = period.seconds();
 
   // max approach rates
-  const double max_vel = 0.15; // m/s
+  const double max_vel = 0.2; // m/s
   const double max_accel = 0.2; // m/s2
   // const double max_angular_vel = 0.15; // rad/s
 
