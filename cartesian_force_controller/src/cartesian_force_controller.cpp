@@ -64,6 +64,7 @@ CartesianForceController::on_init()
 
   auto_declare<std::string>("ft_sensor_ref_link", "");
   auto_declare<bool>("hand_frame_control", false);
+  auto_declare<std::string>("ft_sensor_topic", "isaac_sensor_wrench_filtered");
 
   return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::SUCCESS;
 }
@@ -106,9 +107,13 @@ CartesianForceController::on_configure(const rclcpp_lifecycle::State & previous_
     node_ptr->get_name() + std::string("/target_wrench"), 10,
     std::bind(&CartesianForceController::targetWrenchCallback, this, std::placeholders::_1));
 
+  std::string ft_topic = get_node()->get_parameter("ft_sensor_topic").as_string();
   m_ft_sensor_wrench_subscriber = node_ptr->create_subscription<geometry_msgs::msg::WrenchStamped>(
-      node_ptr->get_name() + std::string("/isaac_sensor_wrench_filtered"), 10,
+      std::string("~/") + ft_topic, 10,
       std::bind(&CartesianForceController::ftSensorWrenchCallback, this, std::placeholders::_1));
+
+  RCLCPP_INFO(get_node()->get_logger(), 
+    "Subscribing to FT sensor topic: ~/%s", ft_topic.c_str());      
 
   // Initialize realtime buffers and parametes
   m_target_wrench_buffer.initRT(KDL::Wrench());
