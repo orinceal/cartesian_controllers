@@ -132,10 +132,15 @@ CartesianForceController::on_configure(const rclcpp_lifecycle::State & previous_
     std::make_shared<realtime_tools::RealtimePublisher<geometry_msgs::msg::WrenchStamped>>(
       node_ptr->create_publisher<geometry_msgs::msg::WrenchStamped>(
         std::string(node_ptr->get_name()) + "/sensor_wrench_base", 3));
+  m_wrench_error_raw_pub = 
+    std::make_shared<realtime_tools::RealtimePublisher<geometry_msgs::msg::WrenchStamped>>(
+      node_ptr->create_publisher<geometry_msgs::msg::WrenchStamped>(
+        std::string(node_ptr->get_name()) + "/wrench_error_raw", 3));        
   m_wrench_error_pub = 
     std::make_shared<realtime_tools::RealtimePublisher<geometry_msgs::msg::WrenchStamped>>(
       node_ptr->create_publisher<geometry_msgs::msg::WrenchStamped>(
         std::string(node_ptr->get_name()) + "/wrench_error", 3));        
+
 
   return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::SUCCESS;
 }
@@ -200,7 +205,7 @@ ctrl::Vector6D CartesianForceController::computeForceError()
   // m_sensor_wrench_base = Base::displayInBaseLink(current_wrench, m_new_ft_sensor_ref);
   m_sensor_wrench_base = m_wrench_base_rot * current_wrench; 
   // Superimpose target wrench and sensor wrench in base frame
-  m_wrench_error_kdl = m_sensor_wrench_base + m_target_wrench_base;
+  m_wrench_error_kdl_raw = m_sensor_wrench_base + m_target_wrench_base;
 
   // apply deadband
   const double force_deadband = 0.2; // N
@@ -208,10 +213,10 @@ ctrl::Vector6D CartesianForceController::computeForceError()
 
   for (int i=0; i < 6; ++i){
     double threshold = (i < 3) ? force_deadband : torque_deadband;
-    if (std::abs(m_wrench_error_kdl(i)) < threshold) {
+    if (std::abs(m_wrench_error_kdl_raw(i)) < threshold) {
       m_wrench_error_kdl(i) = 0.0;
     } else {
-      m_wrench_error_kdl(i) -= std::copysign(threshold, m_wrench_error_kdl(i));
+      m_wrench_error_kdl(i) = m_wrench_error_kdl_raw(i) - std::copysign(threshold, m_wrench_error_kdl_raw(i));
     }
     m_wrench_error[i] = m_wrench_error_kdl(i);
   }
@@ -405,13 +410,20 @@ void CartesianForceController::publishWrenches(const rclcpp::Time& time) {
     msg.wrench = KDLWrenchToWrenchMsg(m_sensor_wrench_base);
     m_sensor_wrench_base_pub->unlockAndPublish();
   }
+  if (m_wrench_error_raw_pub && m_wrench_error_raw_pub->trylock()){
+    auto& msg = m_wrench_error_raw_pub->msg_;
+    msg.header.stamp = time;
+    msg.header.frame_id = Base::m_robot_base_link;
+    msg.wrench = KDLWrenchToWrenchMsg(m_wrench_error_kdl_raw);
+    m_wrench_error_raw_pub->unlockAndPublish();
+  }  
   if (m_wrench_error_pub && m_wrench_error_pub->trylock()){
     auto& msg = m_wrench_error_pub->msg_;
     msg.header.stamp = time;
     msg.header.frame_id = Base::m_robot_base_link;
     msg.wrench = KDLWrenchToWrenchMsg(m_wrench_error_kdl);
     m_wrench_error_pub->unlockAndPublish();
-  }  
+  }    
 }
 
 geometry_msgs::msg::Wrench CartesianForceController::KDLWrenchToWrenchMsg(const KDL::Wrench& kdl_wrench) {

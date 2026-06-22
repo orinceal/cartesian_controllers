@@ -171,7 +171,6 @@ trajectory_msgs::msg::JointTrajectoryPoint ForwardDynamicsSolver::getJointContro
 
   // Update for the next cycle
   m_last_positions = m_current_positions;
-  // m_last_velocities = m_current_velocities;
 
   return control_cmd;
 }

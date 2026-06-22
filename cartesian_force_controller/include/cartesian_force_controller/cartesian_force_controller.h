@@ -132,10 +132,13 @@ protected:
   KDL::Wrench m_target_wrench_base;
   KDL::Wrench m_sensor_wrench_base;
   KDL::Wrench m_wrench_error_kdl;
+  KDL::Wrench m_wrench_error_kdl_raw;
   realtime_tools::RealtimePublisherSharedPtr<geometry_msgs::msg::WrenchStamped> m_target_wrench_pub;
   realtime_tools::RealtimePublisherSharedPtr<geometry_msgs::msg::WrenchStamped> m_sensor_wrench_base_pub;
+  realtime_tools::RealtimePublisherSharedPtr<geometry_msgs::msg::WrenchStamped> m_wrench_error_raw_pub;
   realtime_tools::RealtimePublisherSharedPtr<geometry_msgs::msg::WrenchStamped> m_wrench_error_pub;
-private:
+
+  private:
   void targetWrenchCallback(const geometry_msgs::msg::WrenchStamped::SharedPtr wrench);
   void ftSensorWrenchCallback(const geometry_msgs::msg::WrenchStamped::SharedPtr wrench);
   void contactCheck(double force_magnitude, double release_threshold, const rclcpp::Time& now);

@@ -60,6 +60,8 @@ const KDL::Frame & IKSolver::getEndEffectorPose() const { return m_end_effector_
 const ctrl::Vector6D & IKSolver::getEndEffectorVel() const { return m_end_effector_vel; }
 
 const KDL::JntArray & IKSolver::getPositions() const { return m_current_positions; }
+const KDL::JntArray & IKSolver::getJointVel() const { return m_current_velocities; }
+const KDL::JntArray & IKSolver::getFiltJointVel() const { return m_filt_velocities; }
 
 bool IKSolver::setStartState(
   const std::vector<std::reference_wrapper<hardware_interface::LoanedStateInterface> > &
@@ -282,13 +284,13 @@ void IKSolver::applyVelLimits()
 {
   // Per-joint deadbands matching physical units
   const std::array<double, 7> joint_deadbands = {
-      0.00004,   // Slider_18    (m/s)  — linear, lower deadband
-      0.0004,   // robco_joint_0 (rad/s)
-      0.0004,   // robco_joint_1
-      0.0004,   // robco_joint_2
-      0.0004,   // robco_joint_3
-      0.0004,   // robco_joint_4 — lower stiffness, more noise
-      0.0004   // robco_joint_5 — lowest stiffness, most noise
+      0.0018, // 0.0002, // 0.0016,   // Slider_18    (m/s)  — linear, lower deadband
+      0.003, // 0.0005, // 0.0019,   // robco_joint_0 (rad/s)
+      0.0016, // 0.0009, // 0.0015,   // robco_joint_1
+      0.00075, // 0.0004, // 0.0018,   // robco_joint_2
+      0.0004,// 0.0005, // 0.0006,   // robco_joint_3
+      0.0013,// 0.0004, // 0.0011,   // robco_joint_4 
+      0.0024// 0.0025 // 0.0026   // robco_joint_5 
   };
 
   // check if time to collision is decreasing

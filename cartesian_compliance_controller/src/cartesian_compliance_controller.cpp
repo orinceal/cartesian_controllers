@@ -194,9 +194,10 @@ ctrl::Vector6D CartesianComplianceController::computeComplianceError(const KDL::
   // RCLCPP_INFO(get_node()->get_logger(), "net force error: %f %f %f %f %f %f", net_force(0), net_force(1), net_force(2), net_force(3), net_force(4), net_force(5));
 
   // apply force deadband
-  // double f_threshold = 0.005; // N        based from simulation data noise tolerance 0.15-0.2N * K_pf gain (0.001)
-  // double t_threshold = 0.005; // Nm
+  double f_threshold = 0.003; // N        based from simulation data noise tolerance 0.15-0.2N * K_pf gain (0.001) positional error y 0.000138 * K_p gain (3.0) = 0.0045
+  double t_threshold = 0.002; // Nm      0.00038 * 4.0
   
+  // // axis-by-axis deadband
   // for (int i = 0; i < 6; ++i) {
   //   double limit = (i < 3) ? f_threshold : t_threshold;
 
@@ -207,6 +208,28 @@ ctrl::Vector6D CartesianComplianceController::computeComplianceError(const KDL::
   //     net_force[i] -= std::copysign(limit, net_force[i]);
   //   }
   // }
+
+  // net magnitude deadbands
+  double f_mag = std::sqrt(net_force[0]*net_force[0] + net_force[1]*net_force[1] + net_force[2]*net_force[2]);
+  double t_mag = std::sqrt(net_force[3]*net_force[3] + net_force[4]*net_force[4] + net_force[5]*net_force[5]);
+
+  if (f_mag < f_threshold) {
+    net_force[0] = net_force[1] = net_force[2] = 0.0;
+  } else {
+    // scale by same deadband ratio
+    double scale = (f_mag - f_threshold) / f_mag;
+    net_force[0] *= scale;
+    net_force[1] *= scale;
+    net_force[2] *= scale;
+  }
+  if (t_mag < t_threshold) {
+    net_force[3] = net_force[4] = net_force[5] = 0.0;
+  } else { 
+    double scale = (t_mag - t_threshold) / t_mag;
+    net_force[3] *= scale;
+    net_force[4] *= scale;
+    net_force[5] *= scale;
+  }
 
   return net_force;
 }

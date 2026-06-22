@@ -117,7 +117,9 @@ public:
      * @return The current joint positions
      */
   const KDL::JntArray & getPositions() const;
-
+  const KDL::JntArray & getJointVel() const;
+  const KDL::JntArray & getFiltJointVel() const;
+  
   //! Set initial joint configuration
   bool setStartState(
     const std::vector<std::reference_wrapper<hardware_interface::LoanedStateInterface> > &
@@ -188,7 +190,6 @@ protected:
   void applyJointLimits();
   void applyVelLimits();
   void filterVel();
-  void applyAccelLimits();
 
   template <typename ParameterT>
   auto auto_declare(const std::string & name, const ParameterT & default_value)

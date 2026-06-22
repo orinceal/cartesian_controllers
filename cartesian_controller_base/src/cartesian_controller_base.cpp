@@ -275,6 +275,23 @@ CartesianControllerBase::on_configure(const rclcpp_lifecycle::State & previous_s
       get_node()->create_publisher<geometry_msgs::msg::TwistStamped>(
         std::string(get_node()->get_name()) + "/current_twist", 3));
 
+  m_joint_vel_publisher =
+    std::make_unique<realtime_tools::RealtimePublisher<sensor_msgs::msg::JointState>>(
+      get_node()->create_publisher<sensor_msgs::msg::JointState>(
+        std::string(get_node()->get_name()) + "/joint_velocities", 3));
+  m_filt_joint_vel_publisher =
+    std::make_unique<realtime_tools::RealtimePublisher<sensor_msgs::msg::JointState>>(
+      get_node()->create_publisher<sensor_msgs::msg::JointState>(
+        std::string(get_node()->get_name()) + "/filt_joint_velocities", 3));
+
+  // 
+  m_joint_vel_publisher->msg_.name.resize(7);
+  m_joint_vel_publisher->msg_.velocity.resize(7);
+  m_filt_joint_vel_publisher->msg_.name.resize(7);
+  m_filt_joint_vel_publisher->msg_.velocity.resize(7);
+  m_joint_vel_publisher->msg_.name = {"Slider_18", "robco_joint_0", "robco_joint_1", "robco_joint_2", "robco_joint_3", "robco_joint_4", "robco_joint_5"};
+  m_filt_joint_vel_publisher->msg_.name = {"Slider_18", "robco_joint_0", "robco_joint_1", "robco_joint_2", "robco_joint_3", "robco_joint_4", "robco_joint_5"};
+
   m_configured = true;
 
   return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::SUCCESS;
@@ -685,7 +702,23 @@ void CartesianControllerBase::publishStateFeedback()
 
     m_feedback_twist_publisher->unlockAndPublish();
   }
-  // End-effector 
+  
+  auto joint_vel = m_ik_solver->getJointVel();
+  auto filt_joint_vel = m_ik_solver->getFiltJointVel();
+  if (m_joint_vel_publisher->trylock()) {
+    m_joint_vel_publisher->msg_.header.stamp = get_node()->now();
+    for (int i = 0; i < 7; ++i) {
+      m_joint_vel_publisher->msg_.velocity[i] = joint_vel(i);
+    }
+    m_joint_vel_publisher->unlockAndPublish();
+  }
+  if (m_filt_joint_vel_publisher->trylock()) {
+    m_filt_joint_vel_publisher->msg_.header.stamp = get_node()->now();
+    for (int i = 0; i < 7; ++i) {
+      m_filt_joint_vel_publisher->msg_.velocity[i] = filt_joint_vel(i);
+    }
+    m_filt_joint_vel_publisher->unlockAndPublish();
+  }
 }
 
 }  // namespace cartesian_controller_base
