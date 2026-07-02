@@ -50,7 +50,7 @@ ctrl::Vector6D SpatialPDController::operator()(const std::string & key, const ct
 }
 
 ctrl::Vector6D SpatialPDController::operator()(const std::string & key, const ctrl::Vector6D & error, 
-                                               const ctrl::Vector6D & current_vel)
+                                               const ctrl::Vector6D & damping_term)
 {
   if (m_pd_map.find(key) == m_pd_map.end()) {
     return ctrl::Vector6D::Zero();
@@ -58,7 +58,7 @@ ctrl::Vector6D SpatialPDController::operator()(const std::string & key, const ct
   // Perform pd control separately on each Cartesian dimension
   for (int i = 0; i < 6; ++i)  // 3 transition, 3 rotation
   {
-    m_cmd(i) = m_pd_map.at(key)[i]->operator()(error[i], current_vel[i]);
+    m_cmd(i) = m_pd_map.at(key)[i]->operator()(error[i], damping_term[i]);
   }
   return m_cmd;
 }
@@ -93,4 +93,16 @@ bool SpatialPDController::init(rclcpp_lifecycle::LifecycleNode* handle,
   return true;
 }
 
+ctrl::Vector3D SpatialPDController::getLinearGainRatios(const std::string & key)
+{
+  ctrl::Vector3D gain_ratios = ctrl::Vector3D::Zero();
+  if (m_pd_map.find(key) == m_pd_map.end()) {
+    return gain_ratios;
+  }
+  for (int i = 0; i < 3; ++i) // get gains only for linear directions
+  {
+    gain_ratios[i] = m_pd_map.at(key)[i]->getGainRatio();
+  }
+  return gain_ratios;  
+}
 }  // namespace cartesian_controller_base

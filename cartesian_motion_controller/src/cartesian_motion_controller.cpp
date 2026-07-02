@@ -49,6 +49,8 @@
 
 namespace cartesian_motion_controller
 {
+using cartesian_controller_base::ContactState;
+
 CartesianMotionController::CartesianMotionController() : Base::CartesianControllerBase() {}
 
 rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn
@@ -59,7 +61,6 @@ CartesianMotionController::on_init()
   {
     return ret;
   }
-
   return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::SUCCESS;
 }
 
@@ -79,25 +80,28 @@ CartesianMotionController::on_configure(const rclcpp_lifecycle::State & previous
     return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::ERROR;
   }
 
-  // Initialize Cartesian pd controllers
+  // Initialize Cartesian pd controllers for free motion
   m_spatial_controller.init(node_ptr.get(), m_gain_key);
+  m_gain_ratios = Base::m_spatial_controller.getLinearGainRatios(m_gain_key);
 
   // Create subscription
-  // m_target_frame_subscriber = get_node()->create_subscription<geometry_msgs::msg::PoseStamped>(
-  //   get_node()->get_name() + std::string("/target_frame"), 3,
-  //   std::bind(&CartesianMotionController::targetFrameCallback, this, std::placeholders::_1));
   m_target_frame_subscriber = node_ptr->create_subscription<geometry_msgs::msg::PoseStamped>(
     node_ptr->get_name() + std::string("/target_frame"), 3,
-    std::bind(&CartesianMotionController::targetFrameCallback, this, std::placeholders::_1)
-  );
-  // Initialize realtime buffer
+    std::bind(&CartesianMotionController::targetFrameCallback, this, std::placeholders::_1));
+
+    m_target_twist_subscriber = node_ptr->create_subscription<geometry_msgs::msg::TwistStamped>(
+    node_ptr->get_name() + std::string("/target_twist"), 3,
+    std::bind(&CartesianMotionController::targetTwistCallback, this, std::placeholders::_1));
+
+  // Initialize realtime buffers
   m_target_frame_buffer.initRT(KDL::Frame());
+  m_target_vel_buffer.initRT(Eigen::Vector3d::Zero());
 
   // Controller-internal state publishing
-  m_target_pose_publisher = 
-    std::make_shared<realtime_tools::RealtimePublisher<geometry_msgs::msg::PoseStamped>>(
-      node_ptr->create_publisher<geometry_msgs::msg::PoseStamped>(
-        std::string(node_ptr->get_name()) + "/target_frame_filtered", 3));
+  // m_target_pose_publisher = 
+  //   std::make_shared<realtime_tools::RealtimePublisher<geometry_msgs::msg::PoseStamped>>(
+  //     node_ptr->create_publisher<geometry_msgs::msg::PoseStamped>(
+  //       std::string(node_ptr->get_name()) + "/target_frame_filtered", 3));
   m_pos_error_raw_publisher = 
     std::make_shared<realtime_tools::RealtimePublisher<geometry_msgs::msg::Vector3Stamped>>(
       node_ptr->create_publisher<geometry_msgs::msg::Vector3Stamped>(
@@ -144,8 +148,9 @@ CartesianMotionController::on_deactivate(const rclcpp_lifecycle::State & previou
 controller_interface::return_type CartesianMotionController::update(const rclcpp::Time & time,
                                                                     const rclcpp::Duration & period)
 {
-  // KDL::Frame active_target;
-  const auto active_target = *m_target_frame_buffer.readFromRT();
+  const auto target_frame = *m_target_frame_buffer.readFromRT();
+  const Eigen::Vector3d target_lin_vel = *m_target_vel_buffer.readFromRT();
+
   // Synchronize the internal model and the real robot
   Base::m_ik_solver->synchronizeJointPositions(Base::m_joint_state_pos_handles, period);
 
@@ -159,10 +164,11 @@ controller_interface::return_type CartesianMotionController::update(const rclcpp
     // control cycle.
     auto internal_period = rclcpp::Duration::from_seconds(0.005);
     // Compute the motion error = target - current.
-    // ctrl::Vector6D error = computeMotionError(active_target);
-    computeMotionError(active_target, internal_period);
+    computeMotionError(target_frame, internal_period);
+    ctrl::Vector6D damping_term = computeMotionDampingRef(target_lin_vel);
+
     // apply PD gains: F_motion = K_p * (x_d - x) + D_p * (x_dot_d - x_dot)
-    ctrl::Vector6D command = Base::applyPDGains(m_gain_key, m_motion_error);
+    ctrl::Vector6D command = Base::applyPDGains(m_gain_key, m_motion_error, damping_term);
     // Turn Cartesian error into joint motion    
     Base::computeJointControlCmds(command, internal_period);
   }
@@ -173,16 +179,15 @@ controller_interface::return_type CartesianMotionController::update(const rclcpp
   return controller_interface::return_type::OK;
 }
 
-ctrl::Vector6D CartesianMotionController::computeMotionError(const KDL::Frame& target_frame, const rclcpp::Duration & period)
+ctrl::Vector6D CartesianMotionController::computeMotionError(
+  const KDL::Frame& target_frame, const rclcpp::Duration & period)
 {
-  // filter target
-  KDL::Frame filtered_target = filterTarget(target_frame, period);
-
   // Compute motion error wrt robot_base_link
   const auto current_frame = Base::m_ik_solver->getEndEffectorPose();
+
   // Transformation from target -> current corresponds to error = target - current
-  KDL::Vector pos_err = filtered_target.p - current_frame.p;
-  KDL::Rotation rot_err = filtered_target.M * current_frame.M.Inverse();
+  KDL::Vector pos_err = target_frame.p - current_frame.p;
+  KDL::Rotation rot_err = target_frame.M * current_frame.M.Inverse();
 
   // Use Rodrigues Vector for a compact representation of orientation errors
   // Only for angles within [0,Pi)
@@ -190,7 +195,7 @@ ctrl::Vector6D CartesianMotionController::computeMotionError(const KDL::Frame& t
   double angle = rot_err.GetRotAngle(rot_axis);  // rot_axis is normalized
 
   // store raw errors for publishing before deadband/clamping
-  m_target_frame = filtered_target;
+  m_target_frame = target_frame;
   m_pos_error_raw = pos_err;
   m_rot_error_raw = rot_axis * angle; // rotation error (Rodrigues vector)
 
@@ -203,8 +208,8 @@ ctrl::Vector6D CartesianMotionController::computeMotionError(const KDL::Frame& t
   // Note that this is also the maximal offset that the
   // cartesian_compliance_controller can use to build up a restoring stiffness
   // wrench.
-  const double max_distance = 0.1;
-  const double max_angle = 0.1;
+  const double max_distance = 0.06;
+  const double max_angle = 0.06;
 
   double net_pos_error = pos_err.Norm();
 
@@ -248,8 +253,21 @@ ctrl::Vector6D CartesianMotionController::computeMotionError(const KDL::Frame& t
   m_rot_error(1) = m_motion_error[4];
   m_rot_error(2) = m_motion_error[5];
 
+  return m_motion_error; 
+}
 
-  return m_motion_error;
+ctrl::Vector6D CartesianMotionController::computeMotionDampingRef(const Eigen::Vector3d & target_lin_vel) {
+  // get current x_dot 
+  const auto current_x_dot = Base::m_ik_solver->getEndEffectorVel();  
+
+  Eigen::Vector3d vel_des = target_lin_vel;
+  Eigen::Vector3d normal = Base::m_ik_solver->getWallNormal();
+  if (!normal.isZero()) vel_des -= vel_des.dot(normal) * normal; // remove any target velocities in direction of normal
+  
+  ctrl::Vector6D vel_damping_ref = current_x_dot;
+  vel_damping_ref.head<3>() -= vel_des; // x_dot - x_dot_desired on linear axis (bc we subtract this in applyPDGains)
+  
+  return vel_damping_ref;
 }
 
 void CartesianMotionController::targetFrameCallback(const geometry_msgs::msg::PoseStamped::SharedPtr target)
@@ -286,6 +304,29 @@ void CartesianMotionController::targetFrameCallback(const geometry_msgs::msg::Po
   
   // KDL::Frame smooth_target = filterTarget(target_raw);
   m_target_frame_buffer.writeFromNonRT(target_raw); // non-blocking write    
+}
+
+void CartesianMotionController::targetTwistCallback(const geometry_msgs::msg::TwistStamped::SharedPtr msg)
+{
+  if (!this->isActive()) return;
+  if (std::isnan(msg->twist.linear.x) || std::isnan(msg->twist.linear.y) ||
+      std::isnan(msg->twist.linear.z)) {
+    auto & clock = *get_node()->get_clock();
+    RCLCPP_WARN_STREAM_THROTTLE(get_node()->get_logger(), clock, 3000,
+                                "NaN detected in msg twist. Ignoring input.");
+    return;
+  }
+
+  if (msg->header.frame_id != Base::m_robot_base_link)
+  {
+    auto & clock = *get_node()->get_clock();
+    RCLCPP_WARN_THROTTLE(get_node()->get_logger(), clock, 3000,
+                         "Got target twist in wrong reference frame. Expected: %s but got %s",
+                         Base::m_robot_base_link.c_str(), msg->header.frame_id.c_str());
+    return;
+  }
+  Eigen::Vector3d vel_des(msg->twist.linear.x, msg->twist.linear.y, msg->twist.linear.z);
+  m_target_vel_buffer.writeFromNonRT(vel_des); // non-blocking write    
 }
 
 KDL::Frame CartesianMotionController::filterTarget(const KDL::Frame & target_raw, const rclcpp::Duration & period) {

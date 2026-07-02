@@ -1,4 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////
+// Copyright 2026 Sitegeist GmbH
+//
 // Copyright 2019 FZI Research Center for Information Technology
 //
 // Redistribution and use in source and binary forms, with or without
@@ -31,8 +33,9 @@
 //-----------------------------------------------------------------------------
 /*!\file    cartesian_compliance_controller.h
  *
- * \author  Stefan Scherzinger <scherzin@fzi.de>
- * \date    2017/07/27
+ * \author  Jolene Ng <jolene.ng@tum.de>
+ * \author  Stefan Scherzinger <scherzin@fzi.de> (Original Author)
+ * \date    2026/07/15
  *
  */
 //-----------------------------------------------------------------------------
@@ -100,23 +103,18 @@ private:
      *
      * @return The remaining error wrench, given in robot base frame
      */
-  ctrl::Vector6D computeComplianceError(const KDL::Frame & active_target, const rclcpp::Duration & period);
-  // void calculateCriticalDamping(double zeta = 1.0);
+  ctrl::Vector6D computeComplianceError(const KDL::Frame & target_frame, const Eigen::Vector3d target_lin_vel, const rclcpp::Duration & period);
   
   // parameter callback 
   // rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr m_callback_handle;
 
-  // std::map<std::string, int> m_stiffness_param_map;
-  // std::map<std::string, int> m_damping_param_map;
-  // std::map<std::string, int> m_inertia_param_map;
   std::mutex m_param_mutex; // for thread safety
   bool m_x_ddot_initialized{false};
   ctrl::Vector6D m_stiffness_diag;
-  // ctrl::Vector6D m_damping_diag;
-  // ctrl::Vector6D m_inertia_diag;
   // std::string m_compliance_ref_link;
   // ctrl::Vector6D m_last_x_dot;
   // ctrl::Vector6D m_filt_x_ddot;
+  std::string m_contact_motion_gain_key = "contact_motion";
 };
 
 }  // namespace cartesian_compliance_controller

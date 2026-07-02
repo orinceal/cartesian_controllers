@@ -65,7 +65,8 @@ public:
 
   void init(const std::string & params, rclcpp_lifecycle::LifecycleNode* handle);
 
-  double operator()(const double & error, const double & current_vel);
+  double operator()(const double & error, const double & damping_term);
+  double getGainRatio() const { return m_p.load() / std::max(m_d.load(), 1e-9); }
 
 private:
   // std::shared_ptr<rclcpp_lifecycle::LifecycleNode> m_handle;

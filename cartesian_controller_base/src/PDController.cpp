@@ -91,7 +91,7 @@ void PDController::init(const std::string & params,
   );
 }
 
-double PDController::operator()(const double & error, const double & current_vel)
+double PDController::operator()(const double & error, const double & damping_term)
 {
   // // Get latest gains
   // m_handle->get_parameter(m_params + ".p", m_p);
@@ -100,7 +100,7 @@ double PDController::operator()(const double & error, const double & current_vel
   // m_last_p_error = error;
 
   // apply p_gain on error and d_gain on actual velocity from forward kinematics
-  return (m_p * error) - (m_d * current_vel);
+  return (m_p * error) - (m_d * damping_term);
 }
 
 }  // namespace cartesian_controller_base

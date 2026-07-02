@@ -70,12 +70,11 @@ public:
      * @return The controlled 6-dim vector (translational, rotational).
      */
   ctrl::Vector6D operator()(const std::string & key, const ctrl::Vector6D & error);
-  ctrl::Vector6D operator()(const std::string & key, const ctrl::Vector6D & error, const ctrl::Vector6D & current_vel);
-
+  ctrl::Vector6D operator()(const std::string & key, const ctrl::Vector6D & error, const ctrl::Vector6D & damping_term);
+  ctrl::Vector3D getLinearGainRatios(const std::string & key);
 private:
   ctrl::Vector6D m_cmd;
   std::map<std::string, std::vector<std::unique_ptr<PDController>>> m_pd_map;
-  // std::vector<PDController> m_pd_controllers;
 };
 
 }  // namespace cartesian_controller_base

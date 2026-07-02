@@ -1,4 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////
+// Copyright 2026 Sitegeist GmbH
+//
 // Copyright 2019 FZI Research Center for Information Technology
 //
 // Redistribution and use in source and binary forms, with or without
@@ -30,9 +32,10 @@
 
 //-----------------------------------------------------------------------------
 /*!\file    Utility.h
- *
+ * 
+ * \author  Jolene Ng <jolene.ng@tum.de>
  * \author  Stefan Scherzinger <scherzin@fzi.de>
- * \date    2016/02/16
+ * \date    2026/07/15
  *
  */
 //-----------------------------------------------------------------------------
@@ -65,7 +68,9 @@ typedef Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic> MatrixND;
 
 namespace cartesian_controller_base
 {
-enum class ContactState {FREE, IMPACT, CONTACT};   
+enum class ContactState {FREE, IMPACT, CONTACT};
+
+// Capsule for collision checking and wall repulsion
 struct LinkCapsule {
   std::string link_name;
   int seg_idx{-1};
@@ -76,6 +81,8 @@ struct LinkCapsule {
   double last_d_b;  // in base frame
   bool valid{false};
   bool initialized{false};
+  double filt_dot_a{0.0};
+  double filt_dot_b{0.0};
 };
 } // namespace cartesian_controller_base
 #endif

@@ -1,4 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////
+// Copyright 2026 Sitegeist GmbH
+//
 // Copyright 2019 FZI Research Center for Information Technology
 //
 // Redistribution and use in source and binary forms, with or without
@@ -31,8 +33,9 @@
 //-----------------------------------------------------------------------------
 /*!\file    cartesian_motion_controller.h
  *
+ * \author  Jolene Ng <jolene.ng@tum.de>
  * \author  Stefan Scherzinger <scherzin@fzi.de>
- * \date    2017/07/27
+ * \date    2026/07/15
  *
  */
 //-----------------------------------------------------------------------------
@@ -94,7 +97,7 @@ public:
 
   using Base = cartesian_controller_base::CartesianControllerBase;
 
-protected:
+  protected:
   /**
      * @brief Compute the offset between a target pose and the current end effector pose
      *
@@ -107,19 +110,32 @@ protected:
      */
   ctrl::Vector6D computeMotionError(const KDL::Frame& target_frame, const rclcpp::Duration & period);
   /**
-     * @brief Publish the controller's end-effector position and rotation errors
+     * @brief Compute the controller's end-effector position and rotation errors
      *
      * The data are w.r.t. the specified robot base link.
      * Corresponds to the current error that has been evaluated in this control cycle.
      */
+
+  ctrl::Vector6D computeMotionDampingRef(const Eigen::Vector3d & target_lin_vel);
+  /**
+     * @brief Compute the controller's end-effector motion damping value (x_dot - x_dot_desired)
+     *
+     * This value is subtracted in applyPDGains -K_d * (x_dot - x_dot_desired)
+     * The data are w.r.t. the specified robot base link.
+     * Corresponds to the current ref that has been evaluated in this control cycle.
+     */
+  
   void publishMotionError(const rclcpp::Time& time);
   // Callback function for the subscriber
   void targetFrameCallback(const geometry_msgs::msg::PoseStamped::SharedPtr target);
+  void targetTwistCallback(const geometry_msgs::msg::TwistStamped::SharedPtr msg);
 
-  // Subscriber
+  // Subscribers
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr m_target_frame_subscriber;
+  rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr m_target_twist_subscriber;
   // Buffer to store received commands safely
   realtime_tools::RealtimeBuffer<KDL::Frame> m_target_frame_buffer;
+  realtime_tools::RealtimeBuffer<Eigen::Vector3d> m_target_vel_buffer;
   // Publishers 
   realtime_tools::RealtimePublisherSharedPtr<geometry_msgs::msg::PoseStamped> m_target_pose_publisher;
   realtime_tools::RealtimePublisherSharedPtr<geometry_msgs::msg::Vector3Stamped> m_pos_error_raw_publisher;
@@ -136,13 +152,15 @@ protected:
   KDL::Vector m_rot_error;
   KDL::Frame m_target_frame;
   // std::mutex m_target_mutex;
-  std::string m_gain_key = "motion";
+  std::string m_gain_key = "free_motion";
   
 private:
   KDL::Frame filterTarget(const KDL::Frame & target_raw, const rclcpp::Duration & period);
   bool first_target_{true};
   KDL::Frame filtered_target_frame_;
   double m_approach_vel_{0.0};
+  ctrl::Vector3D m_gain_ratios;
+  
 };
 
 }  // namespace cartesian_motion_controller

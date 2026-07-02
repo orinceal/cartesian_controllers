@@ -1,4 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////
+// Copyright 2026 Sitegeist GmbH
+//
 // Copyright 2019 FZI Research Center for Information Technology
 //
 // Redistribution and use in source and binary forms, with or without
@@ -31,8 +33,9 @@
 //-----------------------------------------------------------------------------
 /*!\file    cartesian_compliance_controller.cpp
  *
+ * \author  Jolene Ng <jolene.ng@tum.de>
  * \author  Stefan Scherzinger <scherzin@fzi.de>
- * \date    2017/07/27
+ * \date    2026/07/15
  *
  */
 //-----------------------------------------------------------------------------
@@ -64,35 +67,6 @@ CartesianComplianceController::on_init()
 
   auto_declare<std::string>("compliance_ref_link", "");
 
-  // declare virtual model spring parameters
-  // constexpr double default_lin_stiff = 500.0; // N/m
-  // constexpr double default_rot_stiff = 30.0;  // Nm/rad
-  // constexpr double default_lin_damp = 310.0;  // Ns/m
-  // constexpr double default_rot_damp = 75.0;  // Nms/rad
-  // constexpr double default_lin_inertial = 1.0; // kg
-  // constexpr double default_rot_inertial = 0.4; // kgm2
-  // stiffness
-  // auto_declare<double>("compliance.trans_x.c", default_lin_stiff);
-  // auto_declare<double>("compliance.trans_y.c", default_lin_stiff);
-  // auto_declare<double>("compliance.trans_z.c", default_lin_stiff);
-  // auto_declare<double>("compliance.rot_x.c", default_rot_stiff);
-  // auto_declare<double>("compliance.rot_y.c", default_rot_stiff);
-  // auto_declare<double>("compliance.rot_z.c", default_rot_stiff);
-  // // damping
-  // auto_declare<double>("compliance.trans_x.k", default_lin_damp);
-  // auto_declare<double>("compliance.trans_y.k", default_lin_damp);
-  // auto_declare<double>("compliance.trans_z.k", default_lin_damp);
-  // auto_declare<double>("compliance.rot_x.k", default_rot_damp);
-  // auto_declare<double>("compliance.rot_y.k", default_rot_damp);
-  // auto_declare<double>("compliance.rot_z.k", default_rot_damp);
-  // // inertial
-  // auto_declare<double>("compliance.trans_x.I", default_lin_inertial);
-  // auto_declare<double>("compliance.trans_y.I", default_lin_inertial);
-  // auto_declare<double>("compliance.trans_z.I", default_lin_inertial);
-  // auto_declare<double>("compliance.rot_x.I", default_rot_inertial);
-  // auto_declare<double>("compliance.rot_y.I", default_rot_inertial);
-  // auto_declare<double>("compliance.rot_z.I", default_rot_inertial);
-
 
   return TYPE::SUCCESS;
 }
@@ -107,8 +81,14 @@ CartesianComplianceController::on_configure(const rclcpp_lifecycle::State & prev
     return TYPE::ERROR;
   }
 
-  // Make sure sensor wrenches are interpreted correctly
-  // ForceBase::setFtSensorReferenceFrame(m_compliance_ref_link);
+  // get node pointer (lock the weak ptr)
+  auto node_ptr = get_node();
+  if (!node_ptr) {
+    RCLCPP_ERROR(get_node()->get_logger(), "Unable to lock node ptr in Compliance Controller on_configure");
+    return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::ERROR;
+  }
+  // intialize gains for constrained motion during contact
+  m_spatial_controller.init(node_ptr.get(), m_contact_motion_gain_key);
 
   return TYPE::SUCCESS;
 }
@@ -143,7 +123,8 @@ controller_interface::return_type CartesianComplianceController::update(
   const rclcpp::Time & time, const rclcpp::Duration & period)
 {
 
-  const auto active_target = *m_target_frame_buffer.readFromRT();
+  const auto target_frame = *m_target_frame_buffer.readFromRT();
+  const auto target_lin_vel = *m_target_vel_buffer.readFromRT();
 
   // Synchronize the internal model and the real robot
   Base::m_ik_solver->synchronizeJointPositions(Base::m_joint_state_pos_handles, period);
@@ -157,7 +138,7 @@ controller_interface::return_type CartesianComplianceController::update(
     auto internal_period = rclcpp::Duration::from_seconds(0.005);
 
     // Compute the net force
-    ctrl::Vector6D net_command = computeComplianceError(active_target, internal_period);
+    ctrl::Vector6D net_command = computeComplianceError(target_frame, target_lin_vel, internal_period);
 
     // Turn Cartesian error into joint motion
     Base::computeJointControlCmds(net_command, internal_period);
@@ -173,28 +154,29 @@ controller_interface::return_type CartesianComplianceController::update(
   return controller_interface::return_type::OK;
 }
 
-ctrl::Vector6D CartesianComplianceController::computeComplianceError(const KDL::Frame& active_target, const rclcpp::Duration & period)
+ctrl::Vector6D CartesianComplianceController::computeComplianceError(const KDL::Frame& target_frame, const Eigen::Vector3d target_lin_vel, const rclcpp::Duration & period)
 {
-  // std::lock_guard<std::mutex> lock(m_param_mutex);
-
-  MotionBase::computeMotionError(active_target, period);
-  ctrl::Vector6D motion_command = Base::applyPDGains(MotionBase::m_gain_key, m_motion_error);
-
-  // RCLCPP_INFO(get_node()->get_logger(), "spring force error: %f %f %f %f %f %f", net_force(0), net_force(1), net_force(2), net_force(3), net_force(4), net_force(5));
-    // // Spring force in base orientation
-    // Base::displayInBaseLink(m_stiffness, m_compliance_ref_link) * MotionBase::computeMotionError(target_frame)
-
-  // Sensor and target force in base orientation
   ForceBase::computeForceError();
+  ctrl::Vector6D force_damping_term = Base::m_ik_solver->getEndEffectorVel();
   ForceBase::updateContactState();
-  ctrl::Vector6D force_command = Base::applyPDGains(ForceBase::m_gain_key, m_wrench_error, ForceBase::m_contact_state);
+  ctrl::Vector6D force_command = Base::applyPDGains(ForceBase::m_gain_key, m_wrench_error, force_damping_term, ForceBase::m_contact_state);
+
+  std::string motion_key;
+  if (ForceBase::m_contact_state == cartesian_controller_base::ContactState::FREE)
+  {
+    motion_key = MotionBase::m_gain_key; // use free motion gains when not in contact
+  } else {
+    motion_key = m_contact_motion_gain_key;
+  }
+
+  MotionBase::computeMotionError(target_frame, period);
+  ctrl::Vector6D motion_damping_term = MotionBase::computeMotionDampingRef(target_lin_vel);
+  ctrl::Vector6D motion_command = Base::applyPDGains(motion_key, m_motion_error, motion_damping_term);
 
   ctrl::Vector6D net_force = motion_command + force_command;
-  //RCLCPP_INFO(get_node()->get_logger(), "force error: %f %f %f %f %f %f", force_error(0), force_error(1), force_error(2), force_error(3), force_error(4), force_error(5));
-  // RCLCPP_INFO(get_node()->get_logger(), "net force error: %f %f %f %f %f %f", net_force(0), net_force(1), net_force(2), net_force(3), net_force(4), net_force(5));
 
   // apply force deadband
-  double f_threshold = 0.003; // N        based from simulation data noise tolerance 0.15-0.2N * K_pf gain (0.001) positional error y 0.000138 * K_p gain (3.0) = 0.0045
+  double f_threshold = 0.001; // N        based from simulation data noise tolerance 0.15-0.2N * K_pf gain (0.001) positional error y 0.000138 * K_p gain (3.0) = 0.0045
   double t_threshold = 0.002; // Nm      0.00038 * 4.0
   
   // // axis-by-axis deadband
@@ -233,15 +215,6 @@ ctrl::Vector6D CartesianComplianceController::computeComplianceError(const KDL::
 
   return net_force;
 }
-
-// void CartesianComplianceController::calculateCriticalDamping(double zeta)
-// {
-//   for (int i = 0; i < 6; ++i)
-//   {
-//     // D = 2 * zeta * sqrt(M * K)
-//     m_damping_diag[i] = 2.0 * zeta * std::sqrt(m_stiffness_diag[i] * m_inertia_diag[i]);
-//   }
-// }
 
 }  // namespace cartesian_compliance_controller
 

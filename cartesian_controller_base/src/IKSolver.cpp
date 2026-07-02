@@ -102,15 +102,15 @@ void IKSolver::synchronizeJointPositions(
 {
   // M1 Alpha Blending
   // const double alpha = 0.1;
-  const double pos_cutoff_hz = 50.0;
-  const double tau = 1.0 / (2.0 * M_PI * pos_cutoff_hz);
-  const double alpha = period.seconds() / (tau + period.seconds()); // at 200Hz with 10Hz cutoff, alpha = 0.005/(0.016 + 0.005) = 0.24
+  // const double pos_cutoff_hz = 50.0;
+  // const double tau = 1.0 / (2.0 * M_PI * pos_cutoff_hz);
+  // const double alpha = period.seconds() / (tau + period.seconds()); // at 200Hz with 10Hz cutoff, alpha = 0.005/(0.016 + 0.005) = 0.24
 
   // pull virtual model toward real (0 = no pull, 1 = instant snap)
   // at 200 Hz: 0.02 → ~10 cycle time constant
-  const double sync_gain = 0.05;
-  const double max_correction_rate = 0.05;  // rad/s — tune this
-  const double max_correction = max_correction_rate * period.seconds();  // rad/cycle
+  // const double sync_gain = 0.1; // 0.05;
+  // const double max_correction_rate = 0.05;  // rad/s — tune this
+  // const double max_correction = max_correction_rate * period.seconds();  // rad/cycle
 
   // M2 Snap within tolerance
   // const double tolerance = 0.0005;
@@ -128,11 +128,11 @@ void IKSolver::synchronizeJointPositions(
     if (!opt.has_value()) continue;
     double q_real = opt.value();
 
-    // M0 direct sync
+    // // M0 direct sync
+    m_current_positions(i) = q_real;
 
     // M1 EMA filter
-    m_ema_positions(i) = (1.0 - alpha) * m_ema_positions(i) + alpha * q_real;
-    //m_current_positions(i) = (1.0 - alpha) * m_current_positions(i) + alpha * q_real;
+    // m_ema_positions(i) = (1.0 - alpha) * m_ema_positions(i) + alpha * q_real;
 
     // M2
     // only update if difference is outside the noise threshold
@@ -158,14 +158,14 @@ void IKSolver::synchronizeJointPositions(
     // }
 
     // continuous proportional pull towards reality - no dead zone
-    double virtual_drift = m_ema_positions(i) - m_current_positions(i);
+    // double virtual_drift = m_ema_positions(i) - m_current_positions(i);
 
-    double correction = sync_gain * virtual_drift;
-    m_current_positions(i) += std::clamp(correction, -max_correction, max_correction);
-    if (std::abs(virtual_drift) > 0.05) {
-      RCLCPP_WARN_THROTTLE(m_handle->get_logger(), *m_handle->get_clock(), 1000,
-      "Joint %zu virtual drift %.4f rad", i, virtual_drift);
-    }
+    // double correction = sync_gain * virtual_drift;
+    // m_current_positions(i) += std::clamp(correction, -max_correction, max_correction);
+    // if (std::abs(virtual_drift) > 0.05) {
+    //   RCLCPP_WARN_THROTTLE(m_handle->get_logger(), *m_handle->get_clock(), 1000,
+    //   "Joint %zu virtual drift %.4f rad", i, virtual_drift);
+    // }
   }
 }
 
@@ -214,14 +214,17 @@ bool IKSolver::init(std::shared_ptr<rclcpp_lifecycle::LifecycleNode> nh, const K
   // m_fk_pos_solver.reset(new KDL::ChainFkSolverPos_recursive(m_chain));
   // m_fk_vel_solver.reset(new KDL::ChainFkSolverVel_recursive(m_chain));
 
+  // joint limits
+  vel_zeroed_.assign(m_number_joints, false);
+
   return true;
 }
 
 void IKSolver::updateKinematics()
 {
   // Pose w. r. t. base 
-  // m_fk_pos_solver->JntToCart(m_current_positions, m_end_effector_pose); // virtual positions
-  m_fk_pos_solver->JntToCart(m_ema_positions, m_end_effector_pose); // real positions from hardware sync
+  m_fk_pos_solver->JntToCart(m_current_positions, m_end_effector_pose); // virtual positions
+  // m_fk_pos_solver->JntToCart(m_ema_positions, m_end_effector_pose); // real positions from hardware sync
   // apply filtering to current velocities
   filterVel();
   // Absolute velocity w. r. t. base
@@ -236,61 +239,32 @@ void IKSolver::updateKinematics()
   m_end_effector_vel[5] = vel.deriv().rot.z();
 }
 
-// void IKSolver::applyJointLimits()
-// {
-//   for (int i = 0; i < m_number_joints; ++i)
-//   {
-//     if (std::isnan(m_lower_pos_limits(i)) || std::isnan(m_upper_pos_limits(i)))
-//     {
-//       // Joint marked as continuous.
-//       continue;
-//     }
-//     m_current_positions(i) =
-//       std::clamp(m_current_positions(i), m_lower_pos_limits(i), m_upper_pos_limits(i));
-//   }
-// }
-
 void IKSolver::applyJointLimits()
 {
-    for (int i = 0; i < m_number_joints; ++i) {
-        if (std::isnan(m_lower_pos_limits(i)) ||
-            std::isnan(m_upper_pos_limits(i))) continue;
-
-        // For joint_4 — detect if flip is about to occur
-        // by checking if position crossed the flip threshold
-        // if (i == 1) {
-        //     double q_prev = m_last_positions(i);
-        //     double q_curr = m_current_positions(i);
-
-        //     // Detect large jump indicating flip
-        //     double dq = q_curr - q_prev;
-        //     if (std::abs(dq) > 0.5) {  // >0.5 rad in one cycle = flip
-        //         RCLCPP_WARN(m_handle->get_logger(),
-        //             "Joint_4 flip detected! dq=%.3f — reverting", dq);
-        //         // Revert to previous position
-        //         m_current_positions(i) = q_prev;
-        //         m_current_velocities(i) = 0.0;  // kill velocity
-        //     }
-        // }
-
-        m_current_positions(i) = std::clamp(
-            m_current_positions(i),
-            m_lower_pos_limits(i),
-            m_upper_pos_limits(i));
+  for (int i = 0; i < m_number_joints; ++i)
+  {
+    if (std::isnan(m_lower_pos_limits(i)) || std::isnan(m_upper_pos_limits(i)))
+    {
+      // Joint marked as continuous.
+      continue;
     }
+    m_current_positions(i) =
+      std::clamp(m_current_positions(i), m_lower_pos_limits(i), m_upper_pos_limits(i));
+      
+  }
 }
 
 void IKSolver::applyVelLimits()
 {
   // Per-joint deadbands matching physical units
   const std::array<double, 7> joint_deadbands = {
-      0.0018, // 0.0002, // 0.0016,   // Slider_18    (m/s)  — linear, lower deadband
-      0.003, // 0.0005, // 0.0019,   // robco_joint_0 (rad/s)
-      0.0016, // 0.0009, // 0.0015,   // robco_joint_1
-      0.00075, // 0.0004, // 0.0018,   // robco_joint_2
-      0.0004,// 0.0005, // 0.0006,   // robco_joint_3
-      0.0013,// 0.0004, // 0.0011,   // robco_joint_4 
-      0.0024// 0.0025 // 0.0026   // robco_joint_5 
+      0.0002, // 0.0018, // 0.0002, // 0.0016,   // Slider_18    (m/s)  — linear, lower deadband
+      0.0005, // 0.003, // 0.0005, // 0.0019,   // robco_joint_0 (rad/s)
+      0.0009, // 0.0016, // 0.0009, // 0.0015,   // robco_joint_1
+      0.0004, // 0.00075, // 0.0004, // 0.0018,   // robco_joint_2
+      0.0005, // 0.0004,// 0.0005, // 0.0006,   // robco_joint_3
+      0.0004, // 0.0013,// 0.0004, // 0.0011,   // robco_joint_4 
+      0.001 // 0.0024// 0.0025 // 0.0026   // robco_joint_5 
   };
 
   // check if time to collision is decreasing
@@ -301,35 +275,38 @@ void IKSolver::applyVelLimits()
       double vel   = m_current_velocities(i);
       double limit = m_vel_limits(i);
       double db = (i < (int)joint_deadbands.size()) ? joint_deadbands[i] : m_vel_deadband; // fallback
-
-      // Consider joint_0, joint_2 and joint_3, which rotation sweeps joint_4 motor through arc into wall
-      // if (i == 1 || i == 3 || i == 4) {
-      // if (ttc_decreasing && safety_factor_ > 0.0) {
-      //   vel *= (1.0 - (safety_factor_ * 0.8)); // max 50% q_dot reduction per cycle
-      //   limit = (1.0 - safety_factor_) * m_vel_limits(i);  // linear
-      //   // limit = (1.0 - (safety_factor * safety_factor)); // quadratic
-      //   // RCLCPP_WARN(m_handle->get_logger(),
-      //   //     // *m_handle->get_clock(), 200,
-      //   //     "Joint %d: min clearance: %.3fm, min ttc: %.3fs, limit: %.4f (safety_factor: %.4f)",
-      //   //     i, collision_clearance_, min_ttc_, limit, safety_factor_);
-      //   }
-      // }
-
+      double hysteresis = 0.5 * db;
       // Deadband: zero out low velocities to prevent noise-driven drift
       if (m_vel_deadband_on) {
-        if (std::abs(vel) < db) {
+        double abs_vel = std::abs(vel);
+        if (vel_zeroed_[i]) {
+          // keep zero until exceed deadband + hysteresis
+          if (abs_vel > db + hysteresis) {
+            vel_zeroed_[i] = false;
+            vel = (vel > 0) ? (vel - db) : (vel + db);
+          } else {
             vel = 0.0;
-        }
-        else {
-            vel = (vel > 0) ? (vel - db)
-                            : (vel + db);
+          }
+        } else {
+            if (abs_vel < db) {
+              vel_zeroed_[i] = true;
+              vel = 0.0;
+        } else {
+            vel = (vel > 0) ? (vel - db) : (vel + db);
         }
       }
+    }
 
       // Hard velocity clamp
       if (m_vel_limits_on) {
-        vel = std::clamp(vel, -limit, limit);
+        double clamped = std::clamp(vel, -limit, limit);
+        if (clamped != vel) {
+          RCLCPP_WARN_THROTTLE(m_handle->get_logger(),*m_handle->get_clock(), 200,
+          "Joint %d vel %.4f m/s", i, vel);
+        }
+        vel = clamped;
       }
+
       m_current_velocities(i) = vel;
   }
   // last_min_ttc_ = min_ttc_;

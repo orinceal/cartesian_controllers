@@ -1,4 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////
+// Copyright 2026 Sitegeist GmbH
+//
 // Copyright 2019 FZI Research Center for Information Technology
 //
 // Redistribution and use in source and binary forms, with or without
@@ -31,8 +33,9 @@
 //-----------------------------------------------------------------------------
 /*!\file    cartesian_controller_base.cpp
  *
- * \author  Stefan Scherzinger <scherzin@fzi.de>
- * \date    2017/07/27
+ * \author  Jolene Ng <jolene.ng@tum.de>
+ * \author  Stefan Scherzinger <scherzin@fzi.de> (Original Author)
+ * \date    2026/07/15
  *
  */
 //-----------------------------------------------------------------------------
@@ -517,20 +520,19 @@ void CartesianControllerBase::writeJointControlCmds()
   }
 }
 ctrl::Vector6D CartesianControllerBase::applyPDGains(const std::string & key,
-                                                     const ctrl::Vector6D & error)
+                                                     const ctrl::Vector6D & error,
+                                                     const ctrl::Vector6D & damping_term)
 {
   // PD controlled system input with x_dot damping
-  ctrl::Vector6D x_dot = m_ik_solver->getEndEffectorVel();
-  ctrl::Vector6D command = m_spatial_controller(key, error, x_dot);
-  return command;
+  return m_spatial_controller(key, error, damping_term);
 }
 
 ctrl::Vector6D CartesianControllerBase::applyPDGains(const std::string & key,
-                                                     const ctrl::Vector6D & error, const ContactState contact_state)
+                                                     const ctrl::Vector6D & error, 
+                                                     const ctrl::Vector6D & damping_term,
+                                                     const ContactState contact_state)
 {
-  // PD controlled system input with x_dot damping
-  ctrl::Vector6D x_dot = m_ik_solver->getEndEffectorVel();
-  // double kd_scale = (contact_state == ContactState::CONTACT) ? 1.0 : 0.0;
+  // additional scaling in damping term based on contact state
   double kd_scale = 0.0;
   switch (contact_state) {
     case ContactState::FREE:
@@ -543,8 +545,7 @@ ctrl::Vector6D CartesianControllerBase::applyPDGains(const std::string & key,
       kd_scale = 3.0; // extra force damping during impact to kill bounce
       break;
   }
-  ctrl::Vector6D command = m_spatial_controller(key, error, kd_scale * x_dot);
-  return command;
+  return m_spatial_controller(key, error, kd_scale * damping_term);
 }
 
 void CartesianControllerBase::computeJointControlCmds(const ctrl::Vector6D & command,

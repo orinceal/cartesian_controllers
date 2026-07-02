@@ -177,8 +177,11 @@ controller_interface::return_type CartesianForceController::update(const rclcpp:
   // Compute the net force
   computeForceError();
   updateContactState();
+  // get current x_dot as damping term
+  ctrl::Vector6D x_dot = Base::m_ik_solver->getEndEffectorVel();
+
   // apply PD gains: F_force = K_p * (f_d - f) - D_f * x_dot
-  ctrl::Vector6D command = Base::applyPDGains(m_gain_key, m_wrench_error, m_contact_state);
+  ctrl::Vector6D command = Base::applyPDGains(m_gain_key, m_wrench_error, x_dot);
   // Turn Cartesian error into joint motion
   Base::computeJointControlCmds(command, internal_period);
   // Write final commands to the hardware interface

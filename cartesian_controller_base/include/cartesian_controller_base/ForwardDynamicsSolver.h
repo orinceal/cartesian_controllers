@@ -110,6 +110,8 @@ public:
             const KDL::JntArray & upper_pos_limits, const KDL::JntArray & lower_pos_limits,
             const KDL::JntArray & vel_limits) override;
   void setNsDampingGain(double k_vq_ns) override {m_k_vq_ns = k_vq_ns;}
+  Eigen::Vector3d getWallNormal() const override;
+
 private:
   // Build a generic robot model for control
   bool buildGenericModel();
@@ -118,11 +120,10 @@ private:
   // Methods for defining collision capsules and corresponding tau from wall repulsion
   void computeCapsuleClearance(const LinkCapsule& capsule, double & clearance_a, double & clearance_b);
   void initializeCapsuleClearances();
-  double addCollisionRepulsion(Eigen::VectorXd& tau_repulse, const rclcpp::Duration& period);
+  void addCollisionRepulsion(Eigen::VectorXd& tau_repulse, const rclcpp::Duration& period);
 
-  // NOT USED: Methods for getting desired null space joint states and to evaluate with a "desired" posture
-  // void nsStateCallback(const sensor_msgs::msg::JointState::SharedPtr msg);
-  // Eigen::VectorXd calculatePosturalBias();
+  // void nsStateCallback(const sensor_msgs::msg::JointState::SharedPtr msg); // to bias posture with a desired nullspace state
+  Eigen::VectorXd calculatePosturalBias();
 
   // Forward dynamics
   std::shared_ptr<KDL::ChainJntToJacSolver> m_jnt_jacobian_solver;
@@ -155,7 +156,7 @@ private:
      * more does the end-effector (which has a unit mass of 1.0) dominate dynamic
      * behavior. Near singularities, a bigger value leads to smoother motion.
      */
-  std::atomic<double> m_min = 0.0005; //0.1; // 0.002; // 0.05; // 0.1;
+  std::atomic<double> m_min = 0.0004; //0.1; // 0.002; // 0.05; // 0.1;
 };
 
 }  // namespace cartesian_controller_base

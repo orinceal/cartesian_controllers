@@ -1,4 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////
+// Copyright 2026 Sitegeist GmbH
+//
 // Copyright 2019 FZI Research Center for Information Technology
 //
 // Redistribution and use in source and binary forms, with or without
@@ -31,8 +33,9 @@
 //-----------------------------------------------------------------------------
 /*!\file    cartesian_controller_base.h
  *
- * \author  Stefan Scherzinger <scherzin@fzi.de>
- * \date    2017/07/27
+ * \author  Jolene Ng <jolene.ng@tum.de>
+ * \author  Stefan Scherzinger <scherzin@fzi.de> (Original Author)
+ * \date    2026/07/15
  *
  */
 //-----------------------------------------------------------------------------
@@ -78,7 +81,7 @@ namespace cartesian_controller_base
  */
 class CartesianControllerBase : public controller_interface::ControllerInterface
 {
-public:
+public:  
   CartesianControllerBase();
   virtual ~CartesianControllerBase(){};
 
@@ -119,7 +122,7 @@ protected:
      * @param error The error to minimize and apply gains to
      * @param key string parameter to access pd gain parameter map in SpatialPDController, current options: "force_gain", "motion_gain"
      */  
-  ctrl::Vector6D applyPDGains(const std::string & key, const ctrl::Vector6D & error);
+  ctrl::Vector6D applyPDGains(const std::string & key, const ctrl::Vector6D & error, const ctrl::Vector6D & damping_term);
 
     /**
      * @brief Apply contact-aware PD gains, enable/disable x_dot damping for force controller
@@ -130,7 +133,7 @@ protected:
      * @param key string parameter to access pd gain parameter map in SpatialPDController, current options: "force_gain", "motion_gain"
      * @param contact_state add a contact state to enable or disable additional force damping
      */  
-  ctrl::Vector6D applyPDGains(const std::string & key, const ctrl::Vector6D & error, const ContactState contact_state);
+  ctrl::Vector6D applyPDGains(const std::string & key, const ctrl::Vector6D & error, const ctrl::Vector6D & damping_term, const ContactState contact_state);
 
   /**
      * @brief Compute one control step using forward dynamics simulation

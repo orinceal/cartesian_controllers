@@ -1,4 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////
+// Copyright 2026 Sitegeist GmbH
+//
 // Copyright 2019 FZI Research Center for Information Technology
 //
 // Redistribution and use in source and binary forms, with or without
@@ -31,8 +33,9 @@
 //-----------------------------------------------------------------------------
 /*!\file    IKSolver.h
  *
- * \author  Stefan Scherzinger <scherzin@fzi.de>
- * \date    2016/02/14
+ * \author  Jolene Ng <jolene.ng@tum.de>
+ * \author  Stefan Scherzinger <scherzin@fzi.de> (Original Author)
+ * \date    2026/07/15
  *
  */
 //-----------------------------------------------------------------------------
@@ -119,7 +122,14 @@ public:
   const KDL::JntArray & getPositions() const;
   const KDL::JntArray & getJointVel() const;
   const KDL::JntArray & getFiltJointVel() const;
-  
+
+  /**
+   * @brief Gets the wall normal info received from subscribed topic.
+   * 
+   * Applies only to ForwardDynamicsSolver  
+   */
+  virtual Eigen::Vector3d getWallNormal() const { return Eigen::Vector3d::Zero(); } 
+
   //! Set initial joint configuration
   bool setStartState(
     const std::vector<std::reference_wrapper<hardware_interface::LoanedStateInterface> > &
@@ -235,6 +245,7 @@ protected:
   double min_ttc_{std::numeric_limits<double>::max()};
   double last_min_ttc_{std::numeric_limits<double>::max()};
   double safety_factor_{0.0};
+  std::vector<bool> vel_zeroed_;
 
   // Forward kinematics
   std::shared_ptr<KDL::ChainFkSolverPos_recursive> m_fk_pos_solver;
