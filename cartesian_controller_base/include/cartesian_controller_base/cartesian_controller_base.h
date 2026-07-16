@@ -53,6 +53,7 @@
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <geometry_msgs/msg/twist_stamped.hpp>
 #include <geometry_msgs/msg/wrench_stamped.hpp>
+#include <std_msgs/msg/float64_multi_array.hpp>
 #include <sensor_msgs/msg/joint_state.hpp>
 #include <hardware_interface/loaned_command_interface.hpp>
 #include <hardware_interface/loaned_state_interface.hpp>
@@ -280,11 +281,12 @@ private:
     m_feedback_pose_publisher;
   realtime_tools::RealtimePublisherSharedPtr<geometry_msgs::msg::TwistStamped>
     m_feedback_twist_publisher;
-  std::unique_ptr<realtime_tools::RealtimePublisher<sensor_msgs::msg::JointState>>
-    m_joint_vel_publisher;
-  std::unique_ptr<realtime_tools::RealtimePublisher<sensor_msgs::msg::JointState>>
-    m_filt_joint_vel_publisher;
-
+  // std::unique_ptr<realtime_tools::RealtimePublisher<sensor_msgs::msg::JointState>>
+  //   m_joint_vel_publisher;
+  // std::unique_ptr<realtime_tools::RealtimePublisher<sensor_msgs::msg::JointState>>
+  //   m_filt_joint_vel_publisher;
+  realtime_tools::RealtimePublisherSharedPtr<std_msgs::msg::Float64MultiArray>
+    m_eff_inertia_pub;
 
   std::vector<std::string> m_cmd_interface_types;
   std::vector<std::reference_wrapper<hardware_interface::LoanedCommandInterface>>

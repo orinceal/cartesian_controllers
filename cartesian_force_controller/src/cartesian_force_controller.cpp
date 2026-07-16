@@ -181,7 +181,7 @@ controller_interface::return_type CartesianForceController::update(const rclcpp:
   ctrl::Vector6D x_dot = Base::m_ik_solver->getEndEffectorVel();
 
   // apply PD gains: F_force = K_p * (f_d - f) - D_f * x_dot
-  ctrl::Vector6D command = Base::applyPDGains(m_gain_key, m_wrench_error, x_dot);
+  ctrl::Vector6D command = Base::applyPDGains(m_gain_key, m_wrench_error, x_dot, m_contact_state);
   // Turn Cartesian error into joint motion
   Base::computeJointControlCmds(command, internal_period);
   // Write final commands to the hardware interface
@@ -336,6 +336,7 @@ void CartesianForceController::updateContactState() {
       break;
       
     case ContactState::CONTACT:
+    {
       // switch to impact state if force spikes
       // if (force_magnitude > force_target * 1.7) {
       //   m_contact_state = ContactState::IMPACT;
@@ -344,7 +345,19 @@ void CartesianForceController::updateContactState() {
       //     "Force spike: %.3fN. Additional damping for impact enabled", force_magnitude);
       // }
       // contactCheck(force_magnitude, release_threshold, now);
+      // switch to free state if target force is zero
+      constexpr double target_zero_eps = 0.1; // N
+      if (force_target < target_zero_eps) {
+        m_contact_state = ContactState::FREE;
+        m_release_timer_running = false;
+        RCLCPP_INFO_THROTTLE(get_node()->get_logger(), *get_node()->get_clock(), 500,
+        "Zero target force received. ContactState set to FREE");
+      } 
+      // else {
+      //   contactCheck(force_magnitude, release_threshold, now);
+      // }
       break;
+    }
 
     case ContactState::IMPACT:
     {

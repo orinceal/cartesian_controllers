@@ -278,22 +278,32 @@ CartesianControllerBase::on_configure(const rclcpp_lifecycle::State & previous_s
       get_node()->create_publisher<geometry_msgs::msg::TwistStamped>(
         std::string(get_node()->get_name()) + "/current_twist", 3));
 
-  m_joint_vel_publisher =
-    std::make_unique<realtime_tools::RealtimePublisher<sensor_msgs::msg::JointState>>(
-      get_node()->create_publisher<sensor_msgs::msg::JointState>(
-        std::string(get_node()->get_name()) + "/joint_velocities", 3));
-  m_filt_joint_vel_publisher =
-    std::make_unique<realtime_tools::RealtimePublisher<sensor_msgs::msg::JointState>>(
-      get_node()->create_publisher<sensor_msgs::msg::JointState>(
-        std::string(get_node()->get_name()) + "/filt_joint_velocities", 3));
+  // m_joint_vel_publisher =
+  //   std::make_unique<realtime_tools::RealtimePublisher<sensor_msgs::msg::JointState>>(
+  //     get_node()->create_publisher<sensor_msgs::msg::JointState>(
+  //       std::string(get_node()->get_name()) + "/joint_velocities", 3));
+  // m_filt_joint_vel_publisher =
+  //   std::make_unique<realtime_tools::RealtimePublisher<sensor_msgs::msg::JointState>>(
+  //     get_node()->create_publisher<sensor_msgs::msg::JointState>(
+  //       std::string(get_node()->get_name()) + "/filt_joint_velocities", 3));
+  
+  m_eff_inertia_pub = 
+    std::make_shared<realtime_tools::RealtimePublisher<std_msgs::msg::Float64MultiArray>>(
+      get_node()->create_publisher<std_msgs::msg::Float64MultiArray>(
+        std::string(get_node()->get_name()) + "/eff_inertia", 3));
 
   // 
-  m_joint_vel_publisher->msg_.name.resize(7);
-  m_joint_vel_publisher->msg_.velocity.resize(7);
-  m_filt_joint_vel_publisher->msg_.name.resize(7);
-  m_filt_joint_vel_publisher->msg_.velocity.resize(7);
-  m_joint_vel_publisher->msg_.name = {"Slider_18", "robco_joint_0", "robco_joint_1", "robco_joint_2", "robco_joint_3", "robco_joint_4", "robco_joint_5"};
-  m_filt_joint_vel_publisher->msg_.name = {"Slider_18", "robco_joint_0", "robco_joint_1", "robco_joint_2", "robco_joint_3", "robco_joint_4", "robco_joint_5"};
+  // m_joint_vel_publisher->msg_.name.resize(7);
+  // m_joint_vel_publisher->msg_.velocity.resize(7);
+  // m_filt_joint_vel_publisher->msg_.name.resize(7);
+  // m_filt_joint_vel_publisher->msg_.velocity.resize(7);
+  // m_joint_vel_publisher->msg_.name = {"Slider_18", "robco_joint_0", "robco_joint_1", "robco_joint_2", "robco_joint_3", "robco_joint_4", "robco_joint_5"};
+  // m_filt_joint_vel_publisher->msg_.name = {"Slider_18", "robco_joint_0", "robco_joint_1", "robco_joint_2", "robco_joint_3", "robco_joint_4", "robco_joint_5"};
+  m_eff_inertia_pub-> msg_.data.resize(6);
+  m_eff_inertia_pub->msg_.layout.dim.resize(1);
+  m_eff_inertia_pub->msg_.layout.dim[0].label = "normal, trans_min, trans_max, rot_min, rot_max, sigma_min";
+  m_eff_inertia_pub->msg_.layout.dim[0].size = 6;
+  m_eff_inertia_pub->msg_.layout.dim[0].stride = 6;
 
   m_configured = true;
 
@@ -704,21 +714,33 @@ void CartesianControllerBase::publishStateFeedback()
     m_feedback_twist_publisher->unlockAndPublish();
   }
   
-  auto joint_vel = m_ik_solver->getJointVel();
-  auto filt_joint_vel = m_ik_solver->getFiltJointVel();
-  if (m_joint_vel_publisher->trylock()) {
-    m_joint_vel_publisher->msg_.header.stamp = get_node()->now();
-    for (int i = 0; i < 7; ++i) {
-      m_joint_vel_publisher->msg_.velocity[i] = joint_vel(i);
-    }
-    m_joint_vel_publisher->unlockAndPublish();
-  }
-  if (m_filt_joint_vel_publisher->trylock()) {
-    m_filt_joint_vel_publisher->msg_.header.stamp = get_node()->now();
-    for (int i = 0; i < 7; ++i) {
-      m_filt_joint_vel_publisher->msg_.velocity[i] = filt_joint_vel(i);
-    }
-    m_filt_joint_vel_publisher->unlockAndPublish();
+  // auto joint_vel = m_ik_solver->getJointVel();
+  // auto filt_joint_vel = m_ik_solver->getFiltJointVel();
+  // if (m_joint_vel_publisher->trylock()) {
+  //   m_joint_vel_publisher->msg_.header.stamp = get_node()->now();
+  //   for (int i = 0; i < 7; ++i) {
+  //     m_joint_vel_publisher->msg_.velocity[i] = joint_vel(i);
+  //   }
+  //   m_joint_vel_publisher->unlockAndPublish();
+  // }
+  // if (m_filt_joint_vel_publisher->trylock()) {
+  //   m_filt_joint_vel_publisher->msg_.header.stamp = get_node()->now();
+  //   for (int i = 0; i < 7; ++i) {
+  //     m_filt_joint_vel_publisher->msg_.velocity[i] = filt_joint_vel(i);
+  //   }
+  //   m_filt_joint_vel_publisher->unlockAndPublish();
+  // }
+  
+  auto eff = m_ik_solver->getEffInertia();
+  if (m_eff_inertia_pub && m_eff_inertia_pub->trylock()) {
+    auto& d = m_eff_inertia_pub->msg_.data;
+    d[0] = eff.normal;
+    d[1] = eff.trans_min;
+    d[2] = eff.trans_max;
+    d[3] = eff.rot_min;
+    d[4] = eff.rot_max;
+    d[5] = eff.sigma_min;
+    m_eff_inertia_pub->unlockAndPublish();
   }
 }
 

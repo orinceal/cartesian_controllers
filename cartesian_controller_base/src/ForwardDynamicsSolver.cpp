@@ -110,8 +110,15 @@ trajectory_msgs::msg::JointTrajectoryPoint ForwardDynamicsSolver::getJointContro
 
   // singularity check SVD
   // Eigen::JacobiSVD<Eigen::MatrixXd> svd(J, Eigen::ComputeThinU | Eigen::ComputeThinV);
-  // double sigma_min = svd.singularValues().minCoeff();
 
+  // variable DLS for operational-space inertia inverse
+  // const double eps = 0.02; // sigma_min value where damping switches on
+  // const double lambda_max = 0.05; // peak damping at singularity
+  // double lambda2 = 1e-9;
+  // if (sigma_min < eps) {
+  //   const double ratio = sigma_min / eps; // in [0, 1]
+  //   lambda2 = lambda_max * lambda_max * (1.0 - ratio * ratio);
+  // }
   // const double sigma_threshold = 0.2;
   // double ns_weight = std::clamp(sigma_min / sigma_threshold, 0.0, 1.0);
 
@@ -121,13 +128,31 @@ trajectory_msgs::msg::JointTrajectoryPoint ForwardDynamicsSolver::getJointContro
   // Khatib formulation
   // Operational space mass matrix: Lambda = (J * H^{-1} * J^T)^{-1} 
   Eigen::MatrixXd HinvJT = m_jnt_space_inertia.data.ldlt().solve(J.transpose()); // H^{-1} J^T, size: n_joints x 6
-  Eigen::MatrixXd Lambda_inv = J * HinvJT + 1e-6 * Eigen::MatrixXd::Identity(6, 6); // J H^{-1} J^T damped, size: 6 x 6
+  Eigen::MatrixXd JHinvJT = J * HinvJT;
+
+  Eigen::JacobiSVD<Eigen::MatrixXd> svd(J);
+  m_sigma_min = svd.singularValues().minCoeff();
+
+  const Eigen::Matrix3d Ainv_t = JHinvJT.topLeftCorner<3,3>();      // translational mobility
+  const Eigen::Matrix3d Ainv_r = JHinvJT.bottomRightCorner<3,3>();  // rotational mobility
+  Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> es_t(Ainv_t);
+  Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> es_r(Ainv_r);
+  m_trans_max = 1.0 / std::max(es_t.eigenvalues().minCoeff(), 1e-9);
+  m_trans_min = 1.0 / std::max(es_t.eigenvalues().maxCoeff(), 1e-9);
+  I_rot_max = 1.0 / std::max(es_r.eigenvalues().minCoeff(), 1e-9);
+  I_rot_min = 1.0 / std::max(es_r.eigenvalues().maxCoeff(), 1e-9);
+  const Eigen::Vector3d n = wall_normal_.isZero() ? Eigen::Vector3d::UnitX() : wall_normal_.normalized();
+  m_eff_normal = 1.0 / std::max((n.transpose() * Ainv_t * n).value(), 1e-9);
+
+  // Eigen::MatrixXd Lambda_inv = J * HinvJT + 1e-6 * Eigen::MatrixXd::Identity(6, 6); // J H^{-1} J^T damped, size: 6 x 6
+  // Eigen::MatrixXd Lambda_inv = J * HinvJT + lambda2 * Eigen::MatrixXd::Identity(6, 6);
+  Eigen::MatrixXd Lambda_inv = JHinvJT + 1e-6 * Eigen::MatrixXd::Identity(6, 6);
 
   // calculate null space damping (tau_s = -k_vq * H(q) * q_dot (see eqns 64 and 65 in https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=1087068))
   Eigen::VectorXd tau_s = -m_k_vq_ns * m_jnt_space_inertia.data * m_last_velocities.data;
 
   // torques that don't affect tip 
-  Eigen::VectorXd tau_null = tau_repulse; // + tau_posture; // + tau_s;
+  Eigen::VectorXd tau_null = tau_repulse + tau_s; // + tau_posture; // + tau_s;
 
   // dynamically consistent projection N^T tau = tau - J^T * lambda * (J H ^-1 tau)
   // J^# = H^{-1} * J^T * lambda 
@@ -139,7 +164,6 @@ trajectory_msgs::msg::JointTrajectoryPoint ForwardDynamicsSolver::getJointContro
   // joint accelerations according to: \f$ \ddot{q} = H^{-1} ( J^T f + B \dot{q}) \f$
   // use Cholesky decomposition (LDLT )instead of inverse to solve for q_ddot 
   m_current_accelerations.data = m_jnt_space_inertia.data.ldlt().solve(tau_tip_accel + tau_null_ns); // + tau_s); //+ tau_repulse_ns);
-
 
   // Numerical time integration with the Euler forward method
   m_current_velocities.data = m_last_velocities.data + m_current_accelerations.data * period.seconds();
@@ -193,7 +217,6 @@ bool ForwardDynamicsSolver::init(std::shared_ptr<rclcpp_lifecycle::LifecycleNode
   m_jnt_space_inertia.resize(m_number_joints);
   // Set the initial value if provided at runtime, else use default value.
   // m_min = auto_declare(m_params + ".link_mass", 0.1);
-  m_lambda = auto_declare(m_params + ".lambda", 0.05);
   m_k_vq_ns = 0.0;
 
   // Define collision capsules. Dimensions measured from STL meshes
@@ -267,6 +290,7 @@ bool ForwardDynamicsSolver::buildGenericModel()
     else if (m_chain.segments[i].getJoint().getType() == KDL::Joint::TransAxis) {
       // set higher mass for slider joint
       m_chain.segments[i].setInertia(
+      //KDL::RigidBodyInertia(0.1, KDL::Vector::Zero(), KDL::RotationalInertia(0.1, 0.1, 0.1)));
       KDL::RigidBodyInertia(0.0001, KDL::Vector::Zero(), KDL::RotationalInertia(0.0001, 0.0001, 0.0001)));
       jnt_seg_idx.at(j) = i;
       j++;

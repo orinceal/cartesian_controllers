@@ -112,6 +112,9 @@ public:
   void setNsDampingGain(double k_vq_ns) override {m_k_vq_ns = k_vq_ns;}
   Eigen::Vector3d getWallNormal() const override;
 
+  EffInertia getEffInertia() const override {
+    return {m_eff_normal, m_trans_min, m_trans_max, I_rot_min, I_rot_max, m_sigma_min};}
+
 private:
   // Build a generic robot model for control
   bool buildGenericModel();
@@ -147,7 +150,8 @@ private:
   Eigen::Vector3d wall_point_;
   std::vector<int> jnt_seg_idx;
   double m_k_vq_ns;
-  double m_lambda{0.05};
+  double m_eff_normal{1.0}; // kg
+  double m_trans_min{0.0}, m_trans_max{0.0}, I_rot_min{0.0}, I_rot_max{0.0}, m_sigma_min{0.0};
   std::vector<LinkCapsule> collision_capsules_;
 
   /**
