@@ -285,8 +285,6 @@ private:
   //   m_joint_vel_publisher;
   // std::unique_ptr<realtime_tools::RealtimePublisher<sensor_msgs::msg::JointState>>
   //   m_filt_joint_vel_publisher;
-  realtime_tools::RealtimePublisherSharedPtr<std_msgs::msg::Float64MultiArray>
-    m_eff_inertia_pub;
 
   std::vector<std::string> m_cmd_interface_types;
   std::vector<std::reference_wrapper<hardware_interface::LoanedCommandInterface>>

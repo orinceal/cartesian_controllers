@@ -201,7 +201,7 @@ ctrl::Vector6D CartesianMotionController::computeMotionError(
 
   // deadband parameters
   const double dist_deadband = 0.0001;      // 1mm (absolute zero)
-  const double rot_deadband  = 0.002; // 0.035;       // ~2 degrees
+  const double rot_deadband  = 0.0087; //
 
   // Clamp maximal tolerated error.
   // The remaining error will be handled in the next control cycle.

@@ -107,6 +107,7 @@ CartesianControllerBase::on_init()
     auto_declare<bool>("solver.velocity_limits_on", false);
     auto_declare<bool>("solver.vel_deadband_on", false);
     auto_declare<bool>("solver.acceleration_limits_on", false);
+    auto_declare<double>("solver.redundant_ns_damping", 0.0);
     auto_declare<double>("redundant_ns.trans_x.p", 0.0);
     auto_declare<double>("robot_description_planning.default_velocity_scaling_factor", 1.0);    
     auto_declare<double>("robot_description_planning.default_acceleration_scaling_factor", 1.0);
@@ -237,13 +238,13 @@ CartesianControllerBase::on_configure(const rclcpp_lifecycle::State & previous_s
   m_forward_kinematics_solver.reset(new KDL::TreeFkSolverPos_recursive(tmp));
   m_iterations = get_node()->get_parameter("solver.iterations").as_int();
   m_error_scale = get_node()->get_parameter("solver.error_scale").as_double();
-  double k_vq_ns = get_node()->get_parameter("redundant_ns.trans_x.p").as_double();
+  double k_vq_ns = get_node()->get_parameter("solver.redundant_ns_damping").as_double();
   // set parameters (only applies to ForwardDynamicsSolver)
   m_ik_solver->setNsDampingGain(k_vq_ns);  
 
   // Initialize gains k_vq for nullspace dissipation forces for redundant manipulator
   // F_rs = k_vq * x_dot according to (Khatib 1987) https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=1087068
-  m_spatial_controller.init(get_node().get(), m_redundant_ns_key);
+  // m_spatial_controller.init(get_node().get(), m_redundant_ns_key);
 
   // Check command interfaces.
   // We support position, velocity, or both.
@@ -287,11 +288,6 @@ CartesianControllerBase::on_configure(const rclcpp_lifecycle::State & previous_s
   //     get_node()->create_publisher<sensor_msgs::msg::JointState>(
   //       std::string(get_node()->get_name()) + "/filt_joint_velocities", 3));
   
-  m_eff_inertia_pub = 
-    std::make_shared<realtime_tools::RealtimePublisher<std_msgs::msg::Float64MultiArray>>(
-      get_node()->create_publisher<std_msgs::msg::Float64MultiArray>(
-        std::string(get_node()->get_name()) + "/eff_inertia", 3));
-
   // 
   // m_joint_vel_publisher->msg_.name.resize(7);
   // m_joint_vel_publisher->msg_.velocity.resize(7);
@@ -299,11 +295,6 @@ CartesianControllerBase::on_configure(const rclcpp_lifecycle::State & previous_s
   // m_filt_joint_vel_publisher->msg_.velocity.resize(7);
   // m_joint_vel_publisher->msg_.name = {"Slider_18", "robco_joint_0", "robco_joint_1", "robco_joint_2", "robco_joint_3", "robco_joint_4", "robco_joint_5"};
   // m_filt_joint_vel_publisher->msg_.name = {"Slider_18", "robco_joint_0", "robco_joint_1", "robco_joint_2", "robco_joint_3", "robco_joint_4", "robco_joint_5"};
-  m_eff_inertia_pub-> msg_.data.resize(6);
-  m_eff_inertia_pub->msg_.layout.dim.resize(1);
-  m_eff_inertia_pub->msg_.layout.dim[0].label = "normal, trans_min, trans_max, rot_min, rot_max, sigma_min";
-  m_eff_inertia_pub->msg_.layout.dim[0].size = 6;
-  m_eff_inertia_pub->msg_.layout.dim[0].stride = 6;
 
   m_configured = true;
 
@@ -563,8 +554,8 @@ void CartesianControllerBase::computeJointControlCmds(const ctrl::Vector6D & com
 {
   ctrl::Vector6D final_command = command;
   // Add F_rs for nullspace dissipation with P gain. No additional damping in this term!
-  ctrl::Vector6D x_dot = m_ik_solver->getEndEffectorVel();
-  final_command += m_spatial_controller(m_redundant_ns_key, x_dot);
+  // ctrl::Vector6D x_dot = m_ik_solver->getEndEffectorVel();
+  // final_command += m_spatial_controller(m_redundant_ns_key, x_dot);
   // apply error scale
   // m_error_scale = get_node()->get_parameter("solver.error_scale").as_double();
   m_cartesian_input = m_error_scale * final_command;
@@ -730,18 +721,6 @@ void CartesianControllerBase::publishStateFeedback()
   //   }
   //   m_filt_joint_vel_publisher->unlockAndPublish();
   // }
-  
-  auto eff = m_ik_solver->getEffInertia();
-  if (m_eff_inertia_pub && m_eff_inertia_pub->trylock()) {
-    auto& d = m_eff_inertia_pub->msg_.data;
-    d[0] = eff.normal;
-    d[1] = eff.trans_min;
-    d[2] = eff.trans_max;
-    d[3] = eff.rot_min;
-    d[4] = eff.rot_max;
-    d[5] = eff.sigma_min;
-    m_eff_inertia_pub->unlockAndPublish();
-  }
 }
 
 }  // namespace cartesian_controller_base

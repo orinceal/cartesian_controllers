@@ -226,11 +226,11 @@ void IKSolver::updateKinematics()
   m_fk_pos_solver->JntToCart(m_current_positions, m_end_effector_pose); // virtual positions
   // m_fk_pos_solver->JntToCart(m_ema_positions, m_end_effector_pose); // real positions from hardware sync
   // apply filtering to current velocities
-  filterVel();
+  // filterVel();
   // Absolute velocity w. r. t. base
   KDL::FrameVel vel;
-  // m_fk_vel_solver->JntToCart(KDL::JntArrayVel(m_current_positions, m_current_velocities), vel);
-  m_fk_vel_solver->JntToCart(KDL::JntArrayVel(m_current_positions, m_filt_velocities), vel);
+  m_fk_vel_solver->JntToCart(KDL::JntArrayVel(m_current_positions, m_current_velocities), vel);
+  // m_fk_vel_solver->JntToCart(KDL::JntArrayVel(m_current_positions, m_filt_velocities), vel);
   m_end_effector_vel[0] = vel.deriv().vel.x();
   m_end_effector_vel[1] = vel.deriv().vel.y();
   m_end_effector_vel[2] = vel.deriv().vel.z();

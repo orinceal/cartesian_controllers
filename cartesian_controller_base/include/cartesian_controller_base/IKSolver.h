@@ -188,9 +188,6 @@ public:
    */
   // virtual void setCollisionCapsules(const std::vector<LinkCapsules> & /*capsules*/) {} // Default implementation does nothing  
 
-  struct EffInertia{double normal{0}, trans_min{0}, trans_max{0}, rot_min{0}, rot_max{0}, sigma_min{0};};
-  virtual EffInertia getEffInertia() const { return {}; }
-
 protected:
   /**
      * @brief Make sure positions stay in allowed margins

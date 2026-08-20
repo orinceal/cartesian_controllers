@@ -93,73 +93,25 @@ trajectory_msgs::msg::JointTrajectoryPoint ForwardDynamicsSolver::getJointContro
   Eigen::VectorXd tau_repulse = Eigen::VectorXd::Zero(m_number_joints);
   addCollisionRepulsion(tau_repulse, period); 
 
-  // // WDLS pseudoinverse for null space projector
-  // Eigen::VectorXd weights = Eigen::VectorXd::Ones(m_number_joints);
-  // // weights(3) = 3.0; // higher weight for slider 
-  // Eigen::MatrixXd W_inv = weights.cwiseInverse().asDiagonal();
-  // double lambda =  0.001;
-
-  // // J_pinv = W_inv * J^T * (J * W_inv * J^T + lambda^2 * I)^-1
-  // Eigen::MatrixXd JJT = J * W_inv * J.transpose();
-  // Eigen::MatrixXd damping = (lambda * lambda) * Eigen::MatrixXd::Identity(6, 6);
-  // Eigen::MatrixXd J_pinv_wdls = W_inv * J.transpose() * (JJT + damping).inverse();
-
-  // // calculate null space projector
-  // Eigen::MatrixXd I = Eigen::MatrixXd::Identity(m_number_joints, m_number_joints);
-  // Eigen::MatrixXd P = I - (J_pinv_wdls * J);
-
-  // singularity check SVD
-  // Eigen::JacobiSVD<Eigen::MatrixXd> svd(J, Eigen::ComputeThinU | Eigen::ComputeThinV);
-
-  // variable DLS for operational-space inertia inverse
-  // const double eps = 0.02; // sigma_min value where damping switches on
-  // const double lambda_max = 0.05; // peak damping at singularity
-  // double lambda2 = 1e-9;
-  // if (sigma_min < eps) {
-  //   const double ratio = sigma_min / eps; // in [0, 1]
-  //   lambda2 = lambda_max * lambda_max * (1.0 - ratio * ratio);
-  // }
-  // const double sigma_threshold = 0.2;
-  // double ns_weight = std::clamp(sigma_min / sigma_threshold, 0.0, 1.0);
-
   // calculate postural bias for slider
   // const auto tau_posture = calculatePosturalBias();
 
   // Khatib formulation
   // Operational space mass matrix: Lambda = (J * H^{-1} * J^T)^{-1} 
   Eigen::MatrixXd HinvJT = m_jnt_space_inertia.data.ldlt().solve(J.transpose()); // H^{-1} J^T, size: n_joints x 6
-  Eigen::MatrixXd JHinvJT = J * HinvJT;
+  Eigen::MatrixXd Lambda_inv = J * HinvJT + 1e-6 * Eigen::MatrixXd::Identity(6, 6); // J H^{-1} J^T damped, size: 6 x 6
 
-  Eigen::JacobiSVD<Eigen::MatrixXd> svd(J);
-  m_sigma_min = svd.singularValues().minCoeff();
-
-  const Eigen::Matrix3d Ainv_t = JHinvJT.topLeftCorner<3,3>();      // translational mobility
-  const Eigen::Matrix3d Ainv_r = JHinvJT.bottomRightCorner<3,3>();  // rotational mobility
-  Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> es_t(Ainv_t);
-  Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> es_r(Ainv_r);
-  m_trans_max = 1.0 / std::max(es_t.eigenvalues().minCoeff(), 1e-9);
-  m_trans_min = 1.0 / std::max(es_t.eigenvalues().maxCoeff(), 1e-9);
-  I_rot_max = 1.0 / std::max(es_r.eigenvalues().minCoeff(), 1e-9);
-  I_rot_min = 1.0 / std::max(es_r.eigenvalues().maxCoeff(), 1e-9);
-  const Eigen::Vector3d n = wall_normal_.isZero() ? Eigen::Vector3d::UnitX() : wall_normal_.normalized();
-  m_eff_normal = 1.0 / std::max((n.transpose() * Ainv_t * n).value(), 1e-9);
-
-  // Eigen::MatrixXd Lambda_inv = J * HinvJT + 1e-6 * Eigen::MatrixXd::Identity(6, 6); // J H^{-1} J^T damped, size: 6 x 6
-  // Eigen::MatrixXd Lambda_inv = J * HinvJT + lambda2 * Eigen::MatrixXd::Identity(6, 6);
-  Eigen::MatrixXd Lambda_inv = JHinvJT + 1e-6 * Eigen::MatrixXd::Identity(6, 6);
-
-  // calculate null space damping (tau_s = -k_vq * H(q) * q_dot (see eqns 64 and 65 in https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=1087068))
-  Eigen::VectorXd tau_s = -m_k_vq_ns * m_jnt_space_inertia.data * m_last_velocities.data;
+  // calculate null space damping (tau_d = -k_vq * H(q) * q_dot (see eqns 64 and 65 in https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=1087068))
+  Eigen::VectorXd tau_d = -m_k_vq_ns * m_jnt_space_inertia.data * m_last_velocities.data;
 
   // torques that don't affect tip 
-  Eigen::VectorXd tau_null = tau_repulse + tau_s; // + tau_posture; // + tau_s;
+  Eigen::VectorXd tau_sec = tau_repulse + tau_d; // + tau_posture;
 
   // dynamically consistent projection N^T tau = tau - J^T * lambda * (J H ^-1 tau)
   // J^# = H^{-1} * J^T * lambda 
-  // Eigen::VectorXd Jsharp_f = HinvJT * Lambda_inv_damped.ldlt().solve(net_force);
-  Eigen::VectorXd Hinv_tau_null = m_jnt_space_inertia.data.ldlt().solve(tau_null);    // H^-1 tau_null (n)
-  Eigen::VectorXd tip_couple = J * Hinv_tau_null;                                     // leaked tip accel
-  Eigen::VectorXd tau_null_ns = tau_null - J.transpose() * Lambda_inv.ldlt().solve(tip_couple);
+  Eigen::VectorXd Hinv_tau_s = m_jnt_space_inertia.data.ldlt().solve(tau_sec);    // H^-1 tau_null (n)
+  Eigen::VectorXd tip_couple = J * Hinv_tau_s;                                     // leaked tip accel
+  Eigen::VectorXd tau_null_ns = tau_sec - J.transpose() * Lambda_inv.ldlt().solve(tip_couple);
 
   // joint accelerations according to: \f$ \ddot{q} = H^{-1} ( J^T f + B \dot{q}) \f$
   // use Cholesky decomposition (LDLT )instead of inverse to solve for q_ddot 
@@ -215,8 +167,6 @@ bool ForwardDynamicsSolver::init(std::shared_ptr<rclcpp_lifecycle::LifecycleNode
 
   m_jnt_jacobian.resize(m_number_joints);
   m_jnt_space_inertia.resize(m_number_joints);
-  // Set the initial value if provided at runtime, else use default value.
-  // m_min = auto_declare(m_params + ".link_mass", 0.1);
   m_k_vq_ns = 0.0;
 
   // Define collision capsules. Dimensions measured from STL meshes
